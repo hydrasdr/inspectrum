@@ -41,6 +41,7 @@
 #include <QScrollBar>
 #include <QSpinBox>
 #include <QThreadPool>
+#include <QTextStream>
 #include <QToolTip>
 #include <QVBoxLayout>
 #include "plots.h"
