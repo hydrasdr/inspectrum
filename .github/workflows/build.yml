@@ -3,65 +3,404 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
-  # Run every friday
-  schedule:
-    - cron: 1 12 * * 5
+permissions:
+  contents: write
 
 env:
   BUILD_TYPE: Release
-  # For macOS qt keg-only package
-  CMAKE_PREFIX_PATH: '/opt/homebrew/opt/qt@5'
+  PACKAGE_NAME: "inspectrum-ng"
 
 jobs:
+  extract-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Extract version
+      id: version
+      run: |
+        VERSION=$(sed -n 's/^project(inspectrum VERSION \([^ ]*\).*/\1/p' CMakeLists.txt)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Extracted version: $VERSION"
+
   build:
+    needs: extract-version
+    runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
-        os: ['macos-latest', 'ubuntu-24.04', 'ubuntu-22.04']
-        qt: ['qt5', 'qt6']
-    runs-on: ${{ matrix.os }}
+        include:
+          # Ubuntu LTS
+          - os: ubuntu-22.04
+            name: "Ubuntu-22.04-LTS"
+            platform: "linux"
+            qt: qt5
+            qt_pkg: "qtbase5-dev"
+          - os: ubuntu-22.04
+            name: "Ubuntu-22.04-LTS"
+            platform: "linux"
+            qt: qt6
+            qt_pkg: "qt6-base-dev"
+          - os: ubuntu-24.04
+            name: "Ubuntu-24.04-LTS"
+            platform: "linux"
+            qt: qt5
+            qt_pkg: "qtbase5-dev"
+          - os: ubuntu-24.04
+            name: "Ubuntu-24.04-LTS"
+            platform: "linux"
+            qt: qt6
+            qt_pkg: "qt6-base-dev"
+
+          # macOS
+          - os: macos-15-intel
+            name: "macOS-x86_64"
+            platform: "macos"
+            arch: "x86_64"
+            qt: qt5
+            qt_brew: "qt@5"
+          - os: macos-15-intel
+            name: "macOS-x86_64"
+            platform: "macos"
+            arch: "x86_64"
+            qt: qt6
+            qt_brew: "qt@6"
+          - os: macos-14
+            name: "macOS-ARM64"
+            platform: "macos"
+            arch: "arm64"
+            qt: qt5
+            qt_brew: "qt@5"
+          - os: macos-14
+            name: "macOS-ARM64"
+            platform: "macos"
+            arch: "arm64"
+            qt: qt6
+            qt_brew: "qt@6"
+
+          # Windows
+          - os: windows-latest
+            name: "Windows-x64"
+            platform: "windows"
+            qt: qt5
+
+    name: ${{ matrix.name }}-${{ matrix.qt }}
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
-    - name: Set variables Qt5
+    # === Linux Dependencies ===
+    - name: Install dependencies (Linux)
+      if: matrix.platform == 'linux'
       run: |
-        echo "QTPKG_MAC=qt@5" >> $GITHUB_ENV
-        echo "QTPKG_UBUNTU=qtbase5-dev" >> $GITHUB_ENV
-      if: matrix.qt == 'qt5'
+        sudo apt-get update
+        sudo apt-get install -y libfftw3-dev libliquid-dev libgl1-mesa-dev ${{ matrix.qt_pkg }}
 
-    - name: Set variables Qt6
-      run: |
-        echo "QTPKG_MAC=qt@6" >> $GITHUB_ENV
-        echo "QTPKG_UBUNTU=qt6-base-dev" >> $GITHUB_ENV
-      if: matrix.qt == 'qt6'
-
+    # === macOS Dependencies ===
     - name: Install dependencies (macOS)
-      run: brew install fftw liquid-dsp ${{ env.QTPKG_MAC }}
-      if: matrix.os == 'macos-latest'
+      if: matrix.platform == 'macos'
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: 1
+        HOMEBREW_NO_INSTALL_CLEANUP: 1
+      run: brew install --quiet fftw liquid-dsp ${{ matrix.qt_brew }}
 
-    - name: Install dependencies (Ubuntu)
+    # === Windows Dependencies ===
+    - name: Setup MSYS2 (Windows)
+      if: matrix.platform == 'windows'
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: >-
+          mingw-w64-x86_64-toolchain
+          mingw-w64-x86_64-cmake
+          mingw-w64-x86_64-ninja
+          mingw-w64-x86_64-qt5-base
+          mingw-w64-x86_64-fftw
+          mingw-w64-x86_64-pkg-config
+          git
+
+    - name: Build liquid-dsp (Windows)
+      if: matrix.platform == 'windows'
+      shell: msys2 {0}
       run: |
-        sudo apt update
-        sudo apt install libfftw3-dev libliquid-dev libgl1-mesa-dev ${{ env.QTPKG_UBUNTU }}
-      if: startsWith(matrix.os, 'ubuntu-')
+        cd /tmp
+        git clone --depth 1 https://github.com/bvernoux/liquid-dsp.git
+        cd liquid-dsp
+        cmake -B build -G Ninja \
+          -DCMAKE_INSTALL_PREFIX=/mingw64 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=OFF
+        cmake --build build
+        cmake --install build
+        cp include/liquid_vla.h include/liquid_msvc_compat.h \
+           include/liquid_win32_compat.h /mingw64/include/liquid/
 
-    - name: Create Build Environment
-      run: cmake -E make_directory ${{runner.workspace}}/build
+    # === Configure ===
+    - name: Configure (Linux)
+      if: matrix.platform == 'linux'
+      run: cmake -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE
 
-    - name: Configure CMake
-      shell: bash
-      working-directory: ${{runner.workspace}}/build
-      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+    - name: Configure (macOS)
+      if: matrix.platform == 'macos'
+      run: |
+        cmake -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -DCMAKE_PREFIX_PATH="$(brew --prefix ${{ matrix.qt_brew }})"
 
-    - name: Build
-      working-directory: ${{runner.workspace}}/build
-      shell: bash
-      run: cmake --build . --config $BUILD_TYPE
+    - name: Configure (Windows)
+      if: matrix.platform == 'windows'
+      shell: msys2 {0}
+      run: |
+        cmake -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DFFTW_USE_STATIC=ON \
+          -DLIQUID_USE_STATIC=ON \
+          -DCMAKE_PREFIX_PATH=/mingw64
 
-    - name: Test
-      working-directory: ${{runner.workspace}}/build
-      shell: bash
+    # === Build ===
+    - name: Build (Linux/macOS)
+      if: matrix.platform != 'windows'
+      run: cmake --build build --config $BUILD_TYPE --parallel
+
+    - name: Build (Windows)
+      if: matrix.platform == 'windows'
+      shell: msys2 {0}
+      run: cmake --build build --parallel
+
+    # === Test ===
+    - name: Test (Linux/macOS)
+      if: matrix.platform != 'windows'
+      working-directory: build
       run: ctest -C $BUILD_TYPE
 
+    # === Package ===
+    - name: Package (Linux)
+      if: matrix.platform == 'linux'
+      run: |
+        VERSION=${{ needs.extract-version.outputs.version }}
+        DIST="${{ env.PACKAGE_NAME }}-${VERSION}-linux-${{ matrix.name }}-${{ matrix.qt }}"
+        mkdir -p "$DIST"
+        cp build/src/inspectrum "$DIST/"
+        chmod +x "$DIST/inspectrum"
+        tar czf "$DIST.tar.gz" "$DIST"
+
+    - name: Package (macOS)
+      if: matrix.platform == 'macos'
+      run: |
+        VERSION=${{ needs.extract-version.outputs.version }}
+        DIST="${{ env.PACKAGE_NAME }}-${VERSION}-macos-${{ matrix.arch }}-${{ matrix.qt }}"
+        mkdir -p "$DIST"
+        cp build/src/inspectrum "$DIST/"
+        chmod +x "$DIST/inspectrum"
+        tar czf "$DIST.tar.gz" "$DIST"
+
+    - name: Package (Windows)
+      if: matrix.platform == 'windows'
+      shell: msys2 {0}
+      run: |
+        VERSION=${{ needs.extract-version.outputs.version }}
+        DIST="${{ env.PACKAGE_NAME }}-${VERSION}-windows-mingw64"
+        mkdir -p "$DIST/platforms" "$DIST/styles"
+        cp build/src/inspectrum.exe "$DIST/"
+
+        # Qt DLLs
+        for dll in Qt5Core Qt5Gui Qt5Widgets Qt5Concurrent; do
+          cp /mingw64/bin/${dll}.dll "$DIST/"
+        done
+
+        # Qt plugins
+        cp /mingw64/share/qt5/plugins/platforms/qwindows.dll "$DIST/platforms/"
+        cp /mingw64/share/qt5/plugins/styles/qwindowsvistastyle.dll "$DIST/styles/" 2>/dev/null || true
+
+        # MinGW runtime
+        for dll in libwinpthread-1 libgcc_s_seh-1 libstdc++-6; do
+          cp /mingw64/bin/${dll}.dll "$DIST/"
+        done
+
+        # Qt transitive deps
+        for dll in libdouble-conversion libicuin78 libicuuc78 libicudt78 \
+                   libpcre2-16-0 libpcre2-8-0 libpng16-16 zlib1 libzstd \
+                   libharfbuzz-0 libmd4c libfreetype-6 libglib-2.0-0 \
+                   libgraphite2 libbrotlidec libbrotlicommon libbz2-1 \
+                   libintl-8 libiconv-2; do
+          cp /mingw64/bin/${dll}.dll "$DIST/" 2>/dev/null || true
+        done
+
+        echo "=== Bundle contents ==="
+        ls -lh "$DIST/"
+        ls -lh "$DIST/platforms/"
+        ls -lh "$DIST/styles/"
+
+        # Create tarball (converted to zip in nightly-release)
+        tar czf "$DIST.tar.gz" "$DIST"
+
+    # === Upload ===
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.PACKAGE_NAME }}-${{ matrix.name }}-${{ matrix.qt }}
+        path: ${{ env.PACKAGE_NAME }}-*.tar.gz
+        retention-days: 30
+
+  build-linux-distros:
+    needs: extract-version
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - container: "debian:bookworm"
+            name: "Debian-12-Bookworm"
+            qt: qt5
+            qt_pkg: "qtbase5-dev"
+          - container: "debian:bookworm"
+            name: "Debian-12-Bookworm"
+            qt: qt6
+            qt_pkg: "qt6-base-dev"
+
+    name: ${{ matrix.name }}-${{ matrix.qt }}
+
+    steps:
+    - name: Install git
+      run: |
+        apt-get update
+        apt-get install -y --no-install-recommends git ca-certificates
+
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        export DEBIAN_FRONTEND=noninteractive
+        export TZ=UTC
+        apt-get install -y --no-install-recommends \
+          cmake g++ pkg-config libfftw3-dev libliquid-dev libgl1-mesa-dev ${{ matrix.qt_pkg }}
+
+    - name: Configure
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build build --config Release --parallel
+
+    - name: Test
+      working-directory: build
+      run: ctest -C Release
+
+    - name: Package
+      run: |
+        VERSION=${{ needs.extract-version.outputs.version }}
+        DIST="${{ env.PACKAGE_NAME }}-${VERSION}-linux-${{ matrix.name }}-${{ matrix.qt }}"
+        mkdir -p "$DIST"
+        cp build/src/inspectrum "$DIST/"
+        chmod +x "$DIST/inspectrum"
+        tar czf "$DIST.tar.gz" "$DIST"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.PACKAGE_NAME }}-${{ matrix.name }}-${{ matrix.qt }}
+        path: ${{ env.PACKAGE_NAME }}-*.tar.gz
+        retention-days: 30
+
+  nightly-release:
+    needs: [extract-version, build, build-linux-distros]
+    runs-on: ubuntu-latest
+    if: |
+      !cancelled() &&
+      needs.build.result == 'success' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts/
+
+    - name: Prepare release assets
+      run: |
+        VERSION=${{ needs.extract-version.outputs.version }}
+        mkdir -p release
+
+        # Copy all Linux and macOS tarballs directly
+        find artifacts/ -name '*.tar.gz' ! -name '*windows*' -exec cp {} release/ \;
+
+        # Convert Windows tarball to zip for end-user convenience
+        WIN_TAR=$(find artifacts/ -name '*-windows-mingw64.tar.gz' | head -1)
+        if [ -n "$WIN_TAR" ]; then
+          tar xzf "$WIN_TAR"
+          DIR_NAME=$(tar tzf "$WIN_TAR" | head -1 | cut -d/ -f1)
+          zip -r "release/${DIR_NAME}.zip" "$DIR_NAME"
+        fi
+
+        echo "=== Release assets ==="
+        ls -lh release/
+
+    - name: Delete existing nightly release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "Deleting existing nightly release..."
+        gh release delete nightly -R ${{ github.repository }} --yes --cleanup-tag 2>/dev/null || echo "No existing nightly release"
+
+    - name: Create nightly release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        VERSION=${{ needs.extract-version.outputs.version }}
+
+        echo "Creating nightly release..."
+        gh release create nightly -R ${{ github.repository }} \
+          --title "Nightly Build (v${VERSION})" \
+          --notes "Automated nightly build from CI - Built from commit ${{ github.sha }}" \
+          --prerelease
+
+        echo "Uploading release assets..."
+        gh release upload nightly release/* -R ${{ github.repository }}
+
+    - name: Update release notes
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ needs.extract-version.outputs.version }}
+      run: |
+        gh release edit nightly -R ${{ github.repository }} --notes "Automated nightly build from \`main\` branch
+
+        **Version:** ${VERSION}
+        **Built from commit:** ${{ github.sha }}
+        **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+        ## Available Builds
+
+        ### Windows
+        | File | Build |
+        |------|-------|
+        | \`inspectrum-ng-${VERSION}-windows-mingw64.zip\` | MinGW64, Qt5, FFTW3 (static), liquid-dsp (static) |
+
+        Self-contained zip with all DLLs included.
+
+        ### GNU/Linux
+        | File | Distro |
+        |------|--------|
+        | \`inspectrum-ng-${VERSION}-linux-Debian-12-Bookworm-qt5.tar.gz\` | Debian 12 (Qt5) |
+        | \`inspectrum-ng-${VERSION}-linux-Debian-12-Bookworm-qt6.tar.gz\` | Debian 12 (Qt6) |
+        | \`inspectrum-ng-${VERSION}-linux-Ubuntu-22.04-LTS-qt5.tar.gz\` | Ubuntu 22.04 LTS (Qt5) |
+        | \`inspectrum-ng-${VERSION}-linux-Ubuntu-22.04-LTS-qt6.tar.gz\` | Ubuntu 22.04 LTS (Qt6) |
+        | \`inspectrum-ng-${VERSION}-linux-Ubuntu-24.04-LTS-qt5.tar.gz\` | Ubuntu 24.04 LTS (Qt5) |
+        | \`inspectrum-ng-${VERSION}-linux-Ubuntu-24.04-LTS-qt6.tar.gz\` | Ubuntu 24.04 LTS (Qt6) |
+
+        Install dependencies first: \`sudo apt install libfftw3-3 libliquid2d libqt5widgets5\` (Qt5) or \`libqt6widgets6\` (Qt6)
+
+        ### macOS
+        | File | Arch |
+        |------|------|
+        | \`inspectrum-ng-${VERSION}-macos-x86_64-qt5.tar.gz\` | Intel x86_64 (Qt5) |
+        | \`inspectrum-ng-${VERSION}-macos-x86_64-qt6.tar.gz\` | Intel x86_64 (Qt6) |
+        | \`inspectrum-ng-${VERSION}-macos-arm64-qt5.tar.gz\` | Apple Silicon ARM64 (Qt5) |
+        | \`inspectrum-ng-${VERSION}-macos-arm64-qt6.tar.gz\` | Apple Silicon ARM64 (Qt6) |
+
+        Install dependencies first: \`brew install fftw liquid-dsp qt@6\`
+        "

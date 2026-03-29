@@ -12,7 +12,16 @@ endif (LIQUID_INCLUDES)
 
 find_path (LIQUID_INCLUDES liquid/liquid.h)
 
+if (LIQUID_USE_STATIC)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES_SAVE ${CMAKE_FIND_LIBRARY_SUFFIXES})
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+endif()
+
 find_library (LIQUID_LIBRARIES NAMES liquid)
+
+if (LIQUID_USE_STATIC)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_FIND_LIBRARY_SUFFIXES_SAVE})
+endif()
 
 # handle the QUIETLY and REQUIRED arguments and set LIQUID_FOUND to TRUE if
 # all listed variables are TRUE
