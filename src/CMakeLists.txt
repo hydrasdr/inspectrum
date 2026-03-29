@@ -84,6 +84,34 @@ target_link_libraries(inspectrum
     ${FFTW_LIBRARIES}
 )
 
+# Benchmark and test target (standalone, no GUI)
+# Only built when benchmark.cpp exists (kept local, not in repo)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/benchmark.cpp)
+    set(bench_sources
+        benchmark.cpp
+        fft.cpp
+        inputsource.cpp
+        samplesource.cpp
+        abstractsamplesource.cpp
+        util.cpp
+    )
+    add_executable(inspectrum_bench ${bench_sources})
+    target_link_libraries(inspectrum_bench
+        ${QT_LIBS}
+        ${LIQUID_LIBRARIES}
+        ${FFTW_LIBRARIES}
+    )
+
+    # CTest: regression tests (uses synthetic signal, no external file needed)
+    add_test(NAME regression_tests
+             COMMAND inspectrum_bench --test-only
+             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(regression_tests PROPERTIES
+        TIMEOUT 60
+        LABELS "regression"
+    )
+endif()
+
 set(INSTALL_DEFAULT_BINDIR "bin" CACHE STRING "Appended to CMAKE_INSTALL_PREFIX")
 
 install(TARGETS inspectrum RUNTIME DESTINATION ${INSTALL_DEFAULT_BINDIR})

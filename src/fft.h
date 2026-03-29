@@ -31,22 +31,24 @@ public:
 	FFT(int size);
 	~FFT();
 	void process(void *dest, void *source);
+	fftwf_complex* execute(const void *source);
 	int getSize() {
 		return fftSize;
 	}
 
-	/* wisdom + plan cache — call once at startup */
+	/* wisdom + plan cache -- call once at startup */
 	static void initWisdom();
 	static void saveWisdom();
 	static bool needsPreWarm();
 	static void preWarm(std::function<void(int, int)> progress = nullptr);
+	static void cleanup();
 
 private:
 	int fftSize;
 	fftwf_complex *fftwIn = nullptr;
 	fftwf_plan fftwPlan = nullptr;
 
-	/* shared plan cache: size → FFTW_MEASURE plan */
+	/* shared plan cache: size -> FFTW_MEASURE plan */
 	static std::mutex cacheMutex;
 	static std::unordered_map<int, fftwf_plan> planCache;
 	static std::string wisdomPath;

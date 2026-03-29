@@ -98,6 +98,7 @@ Options:
 
 ## Input formats
 
+ * `*.wav` - IQ WAV files (SDR++, HDSDR, etc.) - PCM 8/16/32-bit and IEEE float 32-bit, sample rate auto-detected
  * `*.sigmf-meta, *.sigmf-data` - SigMF recordings
  * `*.cf32`, `*.fc32`, `*.cfile` - Complex 32-bit floating point (GNU Radio, osmocom_fft)
  * `*.cf64`, `*.fc64` - Complex 64-bit floating point

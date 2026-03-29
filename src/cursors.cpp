@@ -117,11 +117,35 @@ void Cursors::paintFront(QPainter &painter, QRect &rect, range_t<size_t>)
 
     // Draw vertical edges for individual segments
     if (gridAlpha > 0 && segmentCount > 0 && cursorRect.width() > 0) {
-        painter.setPen(QPen(QColor(128, 128, 128, gridAlpha), 1, Qt::DashLine));
-        for (long i = 1; i < segmentCount; i++) {
-            int pos = minCursor->pos() + (i * cursorRect.width() / segmentCount);
-            painter.drawLine(pos, rect.top(), pos, rect.bottom());
+        // Solid lines when many segments visible (dashed is 5-10x slower)
+        int pixPerSeg = cursorRect.width() / segmentCount;
+        bool useDash = pixPerSeg > 8 && segmentCount < 200;
+        painter.setPen(QPen(QColor(128, 128, 128, gridAlpha), 1,
+                            useDash ? Qt::DashLine : Qt::SolidLine));
+
+        // Only draw lines visible within the viewport
+        int viewLeft = rect.left();
+        int viewRight = rect.right();
+        long firstSeg = std::max(1L, (long)((long long)(viewLeft - minCursor->pos()) *
+                        segmentCount / cursorRect.width()));
+        long lastSeg = std::min((long)segmentCount,
+                       (long)((long long)(viewRight - minCursor->pos()) *
+                       segmentCount / cursorRect.width()) + 1);
+
+        // Batch all lines into a single drawLines call (much faster)
+        int top = rect.top();
+        int bot = rect.bottom();
+        QVector<QLine> lines;
+        lines.reserve(lastSeg - firstSeg);
+        int lastPixel = INT_MIN;
+        for (long i = firstSeg; i < lastSeg; i++) {
+            int pos = minCursor->pos() + (int)((long long)i * cursorRect.width() / segmentCount);
+            // Skip duplicate pixel positions (sub-pixel segments)
+            if (pos == lastPixel) continue;
+            lastPixel = pos;
+            lines.append(QLine(pos, top, pos, bot));
         }
+        painter.drawLines(lines);
     }
 
     // Draw vertical edges

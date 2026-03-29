@@ -26,9 +26,78 @@
 #include <QRect>
 #include <liquid/liquid.h>
 #include <algorithm>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include "util.h"
+
+/*
+ * Fast IEEE 754 approximations for log2 and exp2.
+ *
+ * IEEE 754 float bit layout: [sign:1][exponent:8][mantissa:23]
+ * For a positive normal float x = 2^(e-127) * (1 + m/2^23), so:
+ *   bits(x) = (e << 23) | m  ~=  2^23 * (log2(x) + 127)
+ *
+ * Rearranging: log2(x) ~= (bits(x) - 127*2^23) / 2^23
+ *
+ * Max absolute error: ~0.086 in log2 units = ~0.29 dB.
+ * A 256-color spectrogram over 100 dB has ~0.39 dB per color step,
+ * so the error is sub-pixel and visually identical to standard log2f.
+ *
+ * Edge cases (all safe for spectrogram use):
+ *   power = 0    -> ~-422 dB (standard: -inf) -> clamped to darkest color
+ *   power = +inf -> ~+425 dB (standard: +inf) -> clamped to brightest color
+ *   denormals    -> very negative dB, below display range -> darkest color
+ */
+static inline float fast_log2f_approx(float x)
+{
+    int32_t i;
+    memcpy(&i, &x, sizeof(i));
+    return (float)(i - 0x3F800000) * 1.1920928955078125e-7f; /* 1/(1<<23) */
+}
+
+static inline float fast_exp2f_approx(float x)
+{
+    int32_t i = (int32_t)(x * 8388608.0f) + 0x3F800000; /* x*(1<<23) + 127*(1<<23) */
+    float r;
+    memcpy(&r, &i, sizeof(r));
+    return r;
+}
+
+/* ---- Profiling instrumentation ---- */
+/* set to 1 to enable per-tile profiling output via qDebug */
+#define INSPECTRUM_PROFILE 0
+
+#if INSPECTRUM_PROFILE
+#include <QDebug>
+
+struct TileProfile {
+    qint64 getSamples_ns = 0;
+    qint64 window_ns     = 0;
+    qint64 fft_ns        = 0;
+    qint64 magnitude_ns  = 0;
+    qint64 tile_total_ns = 0;
+    qint64 pixmap_ns     = 0;
+    qint64 enhanced_ns   = 0;
+    int    lines         = 0;
+    int    fftSize       = 0;
+    int    windowSize    = 0;
+
+    void report(const char *tag) {
+        if (lines == 0) return;
+        qDebug("[PROFILE %s] fft=%d win=%d lines=%d | "
+               "getSamples=%lld window=%lld fft=%lld mag=%lld | "
+               "tile=%lld enhanced=%lld pixmap=%lld us",
+               tag, fftSize, windowSize, lines,
+               getSamples_ns/1000, window_ns/1000,
+               fft_ns/1000, magnitude_ns/1000,
+               tile_total_ns/1000, enhanced_ns/1000, pixmap_ns/1000);
+    }
+};
+
+/* per-tile accumulator, reset at start of each getFFTTile */
+static thread_local TileProfile g_prof;
+#endif
 
 
 SpectrogramPlot::SpectrogramPlot(std::shared_ptr<SampleSource<std::complex<float>>> src) : Plot(src), inputSource(src), fftSize(512), windowSize(512), tuner(fftSize, this)
@@ -78,6 +147,9 @@ void SpectrogramPlot::invalidateEvent()
 
 void SpectrogramPlot::paintFront(QPainter &painter, QRect &rect, range_t<size_t> sampleRange)
 {
+#if INSPECTRUM_PROFILE
+    QElapsedTimer pfTimer; pfTimer.start();
+#endif
     if (tunerEnabled() && tunerVisible) {
         if (maskOutOfBand) {
             /* draw tuner in cropped coordinates */
@@ -112,9 +184,19 @@ void SpectrogramPlot::paintFront(QPainter &painter, QRect &rect, range_t<size_t>
     if (frequencyScaleEnabled)
         paintFrequencyScale(painter, rect);
 
+#if INSPECTRUM_PROFILE
+    qint64 pf_tuner_scale = pfTimer.nsecsElapsed(); pfTimer.restart();
+#endif
+
     if (sigmfAnnotationsEnabled)
         paintAnnotations(painter, rect, sampleRange);
 
+#if INSPECTRUM_PROFILE
+    qint64 pf_annot = pfTimer.nsecsElapsed();
+    qDebug("[PROFILE FRONT] tuner+scale=%lld annotations=%lld total=%lld us",
+           pf_tuner_scale/1000, pf_annot/1000,
+           (pf_tuner_scale+pf_annot)/1000);
+#endif
 }
 
 void SpectrogramPlot::paintFrequencyScale(QPainter &painter, QRect &rect)
@@ -356,8 +438,11 @@ QPixmap* SpectrogramPlot::getPixmapTile(size_t tile)
     QPixmap *obj = pixmapCache.object(TileCacheKey(fftSize, zoomLevel, tile));
     if (obj != nullptr)
         return obj;
+#if INSPECTRUM_PROFILE
+    QElapsedTimer pmTimer; pmTimer.start();
+#endif
 
-    /* during rapid zoom, skip expensive tile computation —
+    /* during rapid zoom, skip expensive tile computation --
      * return empty tile, real tiles render when zoom settles */
     if (zoomDeferred) {
         static QPixmap deferredPixmap(1, 1);
@@ -369,20 +454,44 @@ QPixmap* SpectrogramPlot::getPixmapTile(size_t tile)
     int lpt = linesPerTile();
     obj = new QPixmap(lpt, fftSize);
     QImage image(lpt, fftSize, QImage::Format_RGB32);
+#if INSPECTRUM_PROFILE
+    qint64 pm_alloc = pmTimer.nsecsElapsed(); pmTimer.restart();
+#endif
     float pRange = powerRange;  /* use precomputed value */
-    for (int y = 0; y < fftSize; y++) {
-        auto scanLine = (QRgb*)image.scanLine(fftSize - y - 1);
-        for (int x = 0; x < lpt; x++) {
+
+    /* Outer-x / inner-y loop order: fftTile reads are sequential
+     * (column-major data), giving 4-7x speedup at fftSize >= 512
+     * vs the strided outer-y order. Precompute scanLine pointers
+     * to avoid per-row QImage::scanLine() calls in the inner loop. */
+    if ((int)scanLinePtrs.size() < fftSize)
+        scanLinePtrs.resize(fftSize);
+    for (int y = 0; y < fftSize; y++)
+        scanLinePtrs[y] = (QRgb*)image.scanLine(fftSize - y - 1);
+
+    for (int x = 0; x < lpt; x++) {
+        const float *col = fftTile + (size_t)x * fftSize;
+        for (int y = 0; y < fftSize; y++) {
             float normPower = clamp(
-                (fftTile[x * fftSize + y] - powerMax) * pRange,
+                (col[y] - powerMax) * pRange,
                 0.0f, 1.0f);
-            scanLine[x] = colormap[(uint8_t)(normPower * 255.0f)];
+            scanLinePtrs[y][x] = colormap[(uint8_t)(normPower * 255.0f)];
         }
     }
+#if INSPECTRUM_PROFILE
+    qint64 pm_fill = pmTimer.nsecsElapsed(); pmTimer.restart();
+#endif
     obj->convertFromImage(image);
+#if INSPECTRUM_PROFILE
+    qint64 pm_convert = pmTimer.nsecsElapsed();
+#endif
     int pmCostKB = (int)((size_t)lpt * fftSize * 4 / 1024);
     pixmapCache.insert(TileCacheKey(fftSize, zoomLevel, tile), obj,
                        std::max(pmCostKB, 1));
+#if INSPECTRUM_PROFILE
+    qDebug("[PROFILE PIXMAP] fft=%d lpt=%d | alloc=%lld fill=%lld convert=%lld total=%lld us",
+           fftSize, lpt, pm_alloc/1000, pm_fill/1000, pm_convert/1000,
+           (pm_alloc+pm_fill+pm_convert)/1000);
+#endif
     return obj;
 }
 
@@ -392,55 +501,102 @@ float* SpectrogramPlot::getFFTTile(size_t tile)
     if (obj != nullptr)
         return obj->data();
 
+#if INSPECTRUM_PROFILE
+    QElapsedTimer tileTimer; tileTimer.start();
+    g_prof = TileProfile();  /* reset per-line accumulators */
+    g_prof.fftSize = fftSize;
+    g_prof.windowSize = windowSize;
+#endif
+
     int lpt = linesPerTile();
     size_t tileDataSize = (size_t)lpt * fftSize;
-    auto *destStorage = new std::vector<float>(tileDataSize);
-    float *ptr = destStorage->data();
+
+    /* compute into reusable scratch buffer (avoids zeroing a fresh allocation) */
+    if (tileWorkBuf.size() < tileDataSize)
+        tileWorkBuf.resize(tileDataSize);
+    float *ptr = tileWorkBuf.data();
     size_t sample = tile;
     for (int i = 0; i < lpt; i++) {
         getLine(ptr, sample);
         sample += getStride();
         ptr += fftSize;
     }
+
+    /* copy result into a cache-owned allocation */
+    auto *destStorage = new std::vector<float>(tileWorkBuf.begin(),
+                                               tileWorkBuf.begin() + tileDataSize);
     int costKB = (int)(tileDataSize * sizeof(float) / 1024);
     fftCache.insert(TileCacheKey(fftSize, zoomLevel, tile), destStorage,
                     std::max(costKB, 1));
+
+#if INSPECTRUM_PROFILE
+    g_prof.tile_total_ns = tileTimer.nsecsElapsed();
+    g_prof.report("FFT_TILE");
+#endif
+
     return destStorage->data();
 }
 
 void SpectrogramPlot::getLine(float *dest, size_t sample)
 {
     if (inputSource && fft) {
-        /* read windowSize samples centered on 'sample' */
+#if INSPECTRUM_PROFILE
+        QElapsedTimer pt; pt.start();
+#endif
+        /* read windowSize samples centered on 'sample' into reusable buffer */
         const auto first_sample = std::max(
             static_cast<ssize_t>(sample) - windowSize / 2,
             static_cast<ssize_t>(0));
-        auto inputBuf = inputSource->getSamples(first_sample, windowSize);
-        if (inputBuf == nullptr) {
+        if (!inputSource->getSamples(first_sample, windowSize, sampleBuf.get())) {
             auto neg_infinity = -1 * std::numeric_limits<float>::infinity();
             for (int i = 0; i < fftSize; i++, dest++)
                 *dest = neg_infinity;
             return;
         }
+#if INSPECTRUM_PROFILE
+        g_prof.getSamples_ns += pt.nsecsElapsed(); pt.restart();
+#endif
 
         auto *buffer = fftBuffer.get();
 
         /* apply window to input samples */
         for (int i = 0; i < windowSize; i++)
-            buffer[i] = inputBuf[i] * window[i];
+            buffer[i] = sampleBuf[i] * window[i];
 
-        for (int i = windowSize; i < fftSize; i++)
-            buffer[i] = {0, 0};
+        /* zero-pad remaining samples */
+        if (fftSize > windowSize)
+            memset(&buffer[windowSize], 0,
+                   (fftSize - windowSize) * sizeof(std::complex<float>));
+#if INSPECTRUM_PROFILE
+        g_prof.window_ns += pt.nsecsElapsed(); pt.restart();
+#endif
 
-        fft->process(buffer, buffer);
-        for (int i = 0; i < fftSize; i++) {
-            int k = i ^ (fftSize >> 1);
-            auto s = buffer[k] * invN;
+        /* execute FFT and read result directly from internal buffer */
+        auto *result = reinterpret_cast<std::complex<float>*>(fft->execute(buffer));
+#if INSPECTRUM_PROFILE
+        g_prof.fft_ns += pt.nsecsElapsed(); pt.restart();
+#endif
+
+        /* Convert to power spectrum (dB) with FFT-shift (DC to centre).
+         * Split into two sequential passes for contiguous access. */
+        const int half = fftSize >> 1;
+
+        /* first half of output <- upper half of FFT (negative frequencies) */
+        for (int i = 0; i < half; i++) {
+            auto s = result[half + i] * invN;
             float power = s.real() * s.real() + s.imag() * s.imag();
-            float logPower = log2f(power) * logMultiplier;
-            *dest = logPower;
-            dest++;
+            dest[i] = fast_log2f_approx(power) * logMultiplier;
         }
+        /* second half of output <- lower half of FFT (positive frequencies) */
+        for (int i = 0; i < half; i++) {
+            auto s = result[i] * invN;
+            float power = s.real() * s.real() + s.imag() * s.imag();
+            dest[half + i] = fast_log2f_approx(power) * logMultiplier;
+        }
+#if INSPECTRUM_PROFILE
+        g_prof.magnitude_ns += pt.nsecsElapsed();
+        g_prof.lines++;
+#endif
     }
 }
 
@@ -523,7 +679,12 @@ bool SpectrogramPlot::mouseEvent(QEvent::Type type, QMouseEvent *event)
 
             auto translated = QMouseEvent(
                 type,
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                QPointF(event->position().x(), event->position().y() + yOffset),
+                event->globalPosition(),
+#else
                 QPoint(event->pos().x(), event->pos().y() + yOffset),
+#endif
                 event->button(),
                 event->buttons(),
                 event->modifiers()
@@ -564,9 +725,12 @@ void SpectrogramPlot::setFFTSize(int size)
 
     fft.reset(new FFT(fftSize));
     fftBuffer.reset(new std::complex<float>[fftSize]);
+    sampleBuf.reset(new std::complex<float>[windowSize]);
     invN = (windowSize > 0) ? 1.0f / windowSize : 1.0f;
 
-    linearBuf.resize((size_t)linesPerTile() * fftSize);
+    size_t tileBufSize = (size_t)linesPerTile() * fftSize;
+    linearBuf.resize(tileBufSize);
+    tileWorkBuf.resize(tileBufSize);
 
     /* window is windowSize long (applied to input samples) */
     window.reset(new float[windowSize]);
@@ -666,6 +830,9 @@ float* SpectrogramPlot::getEnhancedTile(size_t tile)
     if (obj != nullptr)
         return obj->data();
 
+#if INSPECTRUM_PROFILE
+    QElapsedTimer enhTimer; enhTimer.start();
+#endif
     float *raw = getFFTTile(tile);
     int lpt = linesPerTile();
     size_t tileSize = (size_t)lpt * fftSize;
@@ -676,29 +843,39 @@ float* SpectrogramPlot::getEnhancedTile(size_t tile)
         if (linearBuf.size() < tileSize)
             linearBuf.resize(tileSize);
         for (size_t i = 0; i < tileSize; i++)
-            linearBuf[i] = exp2f(raw[i] * dBtoLinScale);
+            linearBuf[i] = fast_exp2f_approx(raw[i] * dBtoLinScale);
 
         /* causal box filter: average avgCount lines ending at x.
-         * Window = [x - avgCount + 1 .. x], clamped to [0, lpt). */
-        for (int y = 0; y < fftSize; y++) {
-            double runSum = 0;
-            int runCount = 0;
+         * Window = [x - avgCount + 1 .. x], clamped to [0, lpt).
+         *
+         * Loop order: outer x, inner y -- keeps sequential access
+         * to linearBuf and enhanced (both laid out as [x * fftSize + y]).
+         * Running sums array is fftSize doubles, fits comfortably in L1. */
+        std::vector<double> runSum(fftSize, 0.0);
+        for (int x = 0; x < lpt; x++) {
+            int leaveX = x - avgCount;
+            int count = std::min(x + 1, avgCount);
+            double invCount = 1.0 / count;
+            float *linCol = linearBuf.data() + (size_t)x * fftSize;
+            float *enhCol = enhanced->data() + (size_t)x * fftSize;
+            float *leaveCol = (leaveX >= 0)
+                ? linearBuf.data() + (size_t)leaveX * fftSize
+                : nullptr;
 
-            for (int x = 0; x < lpt; x++) {
-                /* add entering element (current) */
-                runSum += linearBuf[x * fftSize + y];
-                runCount++;
-
-                /* remove element that falls out of window */
-                int leave = x - avgCount;
-                if (leave >= 0) {
-                    runSum -= linearBuf[leave * fftSize + y];
-                    runCount--;
+            if (leaveCol) {
+                for (int y = 0; y < fftSize; y++) {
+                    runSum[y] += linCol[y] - leaveCol[y];
+                    double avg = runSum[y] * invCount;
+                    if (avg < 1e-30) avg = 1e-30;
+                    enhCol[y] = fast_log2f_approx((float)avg) * linToDBScale;
                 }
-
-                double avg = runSum / runCount;
-                if (avg < 1e-30) avg = 1e-30;
-                (*enhanced)[x * fftSize + y] = log2f((float)avg) * linToDBScale;
+            } else {
+                for (int y = 0; y < fftSize; y++) {
+                    runSum[y] += linCol[y];
+                    double avg = runSum[y] * invCount;
+                    if (avg < 1e-30) avg = 1e-30;
+                    enhCol[y] = fast_log2f_approx((float)avg) * linToDBScale;
+                }
             }
         }
     } else {
@@ -708,6 +885,11 @@ float* SpectrogramPlot::getEnhancedTile(size_t tile)
     int enhCostKB = (int)(tileSize * sizeof(float) / 1024);
     enhancedCache.insert(TileCacheKey(fftSize, zoomLevel, tile), enhanced,
                          std::max(enhCostKB, 1));
+#if INSPECTRUM_PROFILE
+    g_prof.enhanced_ns = enhTimer.nsecsElapsed();
+    qDebug("[PROFILE ENHANCED] fft=%d lpt=%d | enhanced=%lld us",
+           fftSize, lpt, g_prof.enhanced_ns/1000);
+#endif
     return enhanced->data();
 }
 
@@ -727,7 +909,7 @@ void SpectrogramPlot::setZoomY(int level)
 {
     yZoomLevel = std::max(level, 1);
 
-    /* no cache clear needed — tiles are the same, only
+    /* no cache clear needed -- tiles are the same, only
      * the crop window in paintMid changes */
     emit repaint();
 }
@@ -775,8 +957,8 @@ void SpectrogramPlot::tunerMoved()
     /*
      * Lightweight update: just redraw the tuner overlay and
      * update the info display. Do NOT call updateHeight() here
-     * — changing the height during drag causes a feedback loop
-     * (height change → coordinate mapping change → cursor jumps).
+     * -- changing the height during drag causes a feedback loop
+     * (height change -> coordinate mapping change -> cursor jumps).
      * Height is updated in tunerFullUpdate() when drag ends.
      */
     emit tunerInfoChanged(tunerCentreHz(), tunerBandwidthHz());
@@ -788,7 +970,7 @@ void SpectrogramPlot::tunerMoved()
 
 void SpectrogramPlot::tunerFullUpdate()
 {
-    /* skip all expensive work while still dragging — only
+    /* skip all expensive work while still dragging -- only
      * update when the user releases the mouse button */
     if (tuner.isDragging()) {
         tunerUpdateTimer.start(100); /* retry later */

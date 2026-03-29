@@ -35,7 +35,7 @@ public:
 	void setLsbFirst(bool lsb) { lsbFirst = lsb; bitsCacheDirty = true; }
 	bool isLsbFirst() const { return lsbFirst; }
 
-	std::vector<int> extractBits();
+	const std::vector<int> &extractBits();
 	QString getBinaryString();
 	QString getHexString();
 	QString getAsciiString();

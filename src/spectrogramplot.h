@@ -119,6 +119,7 @@ private:
     std::unique_ptr<FFT> fft;
     std::unique_ptr<float[]> window;
     std::unique_ptr<std::complex<float>[]> fftBuffer;
+    std::unique_ptr<std::complex<float>[]> sampleBuf;
     QCache<TileCacheKey, QPixmap> pixmapCache;
     QCache<TileCacheKey, std::vector<float>> fftCache;
     uint colormap[256];
@@ -133,13 +134,15 @@ private:
 
     /* precomputed constants (updated when settings change) */
     float invN = 1.0f;                         /* 1.0 / windowSize */
-    static constexpr float logMultiplier = 3.321928094887362f; /* 10 / log2(10) */
-    static constexpr float dBtoLinScale = 0.33219280948873626f; /* log2(10) / 10 */
-    static constexpr float linToDBScale = 3.321928094887362f;   /* 10 / log2(10) */
+    static constexpr float logMultiplier = 3.0102999566398120f; /* 10 / log2(10) = dBFS */
+    static constexpr float dBtoLinScale = 0.33219280948873626f; /* log2(10) / 10 = 1/logMultiplier */
+    static constexpr float linToDBScale = 3.0102999566398120f;  /* 10 / log2(10) = dBFS */
     float powerRange = -1.0f;                  /* -1.0 / abs(powerMin - powerMax) */
 
-    /* reusable buffers for enhancement (avoid per-tile allocation) */
-    std::vector<float> linearBuf;              /* dB→linear conversion */
+    /* reusable buffers (avoid per-tile allocation) */
+    std::vector<float> linearBuf;              /* dB->linear conversion */
+    std::vector<float> tileWorkBuf;            /* scratch for getFFTTile */
+    std::vector<QRgb*> scanLinePtrs;           /* precomputed QImage row pointers */
     double sampleRate;
     bool frequencyScaleEnabled;
     bool sigmfAnnotationsEnabled;

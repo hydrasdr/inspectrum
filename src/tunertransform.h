@@ -31,7 +31,7 @@ private:
     float gain = 1.0f;
     std::vector<float> taps;
 
-    /* pre-allocated liquid-dsp objects — avoid malloc/free per work() call */
+    /* pre-allocated liquid-dsp objects -- avoid malloc/free per work() call */
     nco_crcf nco = nullptr;
     firfilt_crcf filter = nullptr;
     std::vector<std::complex<float>> mixBuf;

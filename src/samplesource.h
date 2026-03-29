@@ -20,6 +20,7 @@
 #pragma once
 
 #include <complex>
+#include <cstring>
 #include <memory>
 #include "abstractsamplesource.h"
 
@@ -51,6 +52,12 @@ public:
     virtual ~SampleSource() {};
 
     virtual std::unique_ptr<T[]> getSamples(size_t start, size_t length) = 0;
+    virtual bool getSamples(size_t start, size_t length, T* dest) {
+        auto buf = getSamples(start, length);
+        if (!buf) return false;
+        memcpy(dest, buf.get(), length * sizeof(T));
+        return true;
+    }
     virtual void invalidateEvent() { };
     virtual size_t count() = 0;
     virtual double rate() = 0;

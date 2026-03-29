@@ -41,7 +41,7 @@ void ThresholdPlot::setCursorInfo(bool enabled,
 	segmentCount = segments;
 }
 
-std::vector<int> ThresholdPlot::extractBits()
+const std::vector<int> &ThresholdPlot::extractBits()
 {
 	if (!bitsCacheDirty)
 		return cachedBits;
@@ -223,7 +223,7 @@ void ThresholdPlot::paintFront(QPainter &painter, QRect &rect,
 		return;
 	}
 
-	/* row positions — use largest visible font for spacing */
+	/* row positions -- use largest visible font for spacing */
 	int maxFontSz = std::max({showBin ? binFontSz : 0,
 				  showHex ? hexFontSz : 0,
 				  showAsc ? ascFontSz : 0});

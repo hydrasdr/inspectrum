@@ -335,6 +335,10 @@ SpectrogramControls::SpectrogramControls(const QString & title, QWidget * parent
         if (parseSIValue(tunerBandwidthEdit->text().toStdString(), hz) && hz > 0)
             emit tunerBandwidthEdited(hz);
     });
+
+    /* debounced settings persistence: flush 500ms after last change */
+    settingsSaveTimer.setSingleShot(true);
+    connect(&settingsSaveTimer, &QTimer::timeout, this, &SpectrogramControls::flushSettings);
 }
 
 void SpectrogramControls::clearCursorLabels()
@@ -389,30 +393,48 @@ void SpectrogramControls::fftOrZoomChanged(void)
     emit fftOrZoomChanged(fftSize, zoomLevel);
 }
 
+void SpectrogramControls::markSettingsDirty()
+{
+    settingsDirty = true;
+    settingsSaveTimer.start(500); /* flush 500ms after last change */
+}
+
+void SpectrogramControls::flushSettings()
+{
+    if (!settingsDirty)
+        return;
+    settingsDirty = false;
+    QSettings settings;
+    settings.setValue("FFTSize", fftSizeSlider->value());
+    settings.setValue("ZoomLevel", zoomLevelSlider->value());
+    settings.setValue("PowerMin", powerMinSlider->value());
+    settings.setValue("PowerMax", powerMaxSlider->value());
+}
+
 void SpectrogramControls::fftSizeChanged(int value)
 {
-    QSettings settings;
-    settings.setValue("FFTSize", value);
+    (void)value;
+    markSettingsDirty();
     fftOrZoomChanged();
 }
 
 void SpectrogramControls::zoomLevelChanged(int value)
 {
-    QSettings settings;
-    settings.setValue("ZoomLevel", value);
+    (void)value;
+    markSettingsDirty();
     fftOrZoomChanged();
 }
 
 void SpectrogramControls::powerMinChanged(int value)
 {
-    QSettings settings;
-    settings.setValue("PowerMin", value);
+    (void)value;
+    markSettingsDirty();
 }
 
 void SpectrogramControls::powerMaxChanged(int value)
 {
-    QSettings settings;
-    settings.setValue("PowerMax", value);
+    (void)value;
+    markSettingsDirty();
 }
 
 void SpectrogramControls::fileOpenButtonClicked()
@@ -423,6 +445,7 @@ void SpectrogramControls::fileOpenButtonClicked()
     fileSelect.setNameFilter(tr("All files (*);;"
                 "Session (*.isession);;"
                 "Bookmarks (*.json);;"
+                "IQ WAV (*.wav);;"
                 "IQ int16 (*.cs16 *.sc16 *.c16);;"
                 "IQ float32 (*.cfile *.cf32 *.fc32);;"
                 "IQ int8 (*.cs8 *.sc8 *.c8);;"
@@ -499,7 +522,7 @@ void SpectrogramControls::tunerInfoChanged(double centreHz, double bandwidthHz)
 
 void SpectrogramControls::renderTimeChanged(int ms)
 {
-    /* skip 0ms readings — pure cache hits with no real work */
+    /* skip 0ms readings -- pure cache hits with no real work */
     if (ms <= 0)
         return;
 

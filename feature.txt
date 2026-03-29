@@ -34,24 +34,25 @@ controls rearranged by workflow.
 
 Performance
 -----------
-- FFTW plan cache with FFTW_MEASURE + wisdom persistence
-- Pre-warm all FFT sizes at first startup (progress dialog)
-- Deferred tuner/zoom updates (150ms timer)
-- ThresholdPlot bit cache (dirty tracking)
-- SampleBuffer temp buffer reuse (grow-only)
-- Pre-allocated liquid-dsp objects (NCO, FIR filter, freqdem)
-- Adaptive tile size (~512KB/tile), 128MB caches with cost tracking
-- FNV-1a hash for tile cache keys
-- Precomputed constants (invN, logMultiplier, dBtoLinScale, powerRange)
-- Reusable linearBuf for averaging (exp2f/log2f instead of powf/log10f)
-- FFT normalization by windowSize (consistent across zero-pad levels)
-- Partial read support (zero-fill at EOF)
+- FFTW plan cache (FFTW_MEASURE + wisdom persistence + pre-warm at startup)
+- Deferred tuner/zoom updates, ThresholdPlot bit cache, debounced QSettings writes
+- Pre-allocated reusable buffers (FFT tile, sample, linear, liquid-dsp objects)
+- Adaptive tile size (~512KB/tile), 128MB caches, FNV-1a hash keys
+- Precomputed constants, FFT normalization by windowSize, partial read zero-fill
+- Fast IEEE754 log2f/exp2f approximations (bit-trick, sub-pixel dB accuracy)
+- Zero-copy FFT API, zero-alloc sample reads, memset zero-pad
+- Cache-friendly loop order for colormap (4-7x faster) and averaging
+- Cursor grid: viewport culling, sub-pixel dedup, batched solid lines
+- Correct dB scale (true dBFS, roundtrip-correct dB/linear averaging)
 
 Bug fixes
 ---------
 Division-by-zero, integer overflow, null pointer guards, uninitialized members,
 bounds checks, iterator fix, type mismatches, tuner constraints, cursor paint.
 All -Wall -Wextra warnings resolved (excluding third-party liquid-dsp).
+Qt5/Qt6 deprecated QMouseEvent constructor fixed.
+.isession files now load correctly from command line.
+All source files ASCII-only (except SI micro sign).
 
 Build
 -----
@@ -59,3 +60,4 @@ MinGW: static linking (libgcc, libstdc++, -mwindows), Qt/runtime DLL bundling.
 FFTW before LIQUID link order for static libs.
 Wisdom file next to exe (fallback to AppLocalDataLocation on read-only installs).
 Portable: builds on Windows (MinGW), Linux, macOS.
+Optional regression test target via CTest.

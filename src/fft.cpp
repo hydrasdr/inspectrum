@@ -72,7 +72,7 @@ bool FFT::needsPreWarm()
 void FFT::preWarm(std::function<void(int, int)> progress)
 {
 	/* pre-create plans for all power-of-2 sizes used by the app:
-	 * window 2^2..2^14, zero-pad 1x..8x → FFT sizes 4..131072 */
+	 * window 2^2..2^14, zero-pad 1x..8x -> FFT sizes 4..131072 */
 	int total = 17 - 2 + 1;  /* exponents 2..17 */
 	int step = 0;
 
@@ -108,6 +108,15 @@ void FFT::preWarm(std::function<void(int, int)> progress)
 	qDebug() << "FFTW: pre-warmed" << planCache.size() << "plans";
 }
 
+void FFT::cleanup()
+{
+	std::lock_guard<std::mutex> lock(cacheMutex);
+	for (auto &kv : planCache)
+		fftwf_destroy_plan(kv.second);
+	planCache.clear();
+	fftwf_cleanup();
+}
+
 fftwf_plan FFT::getCachedPlan(int size, fftwf_complex *in)
 {
 	std::lock_guard<std::mutex> lock(cacheMutex);
@@ -135,7 +144,7 @@ FFT::FFT(int size)
 
 FFT::~FFT()
 {
-	/* plans are shared in planCache — don't destroy them here */
+	/* plans are shared in planCache -- destroyed by cleanup() at exit */
 	if (fftwIn)
 		fftwf_free(fftwIn);
 }
@@ -149,4 +158,13 @@ void FFT::process(void *dest, void *source)
 	memcpy(fftwIn, source, fftSize * sizeof(fftwf_complex));
 	fftwf_execute_dft(fftwPlan, fftwIn, fftwIn);
 	memcpy(dest, fftwIn, fftSize * sizeof(fftwf_complex));
+}
+
+fftwf_complex* FFT::execute(const void *source)
+{
+	if (!fftwPlan || !fftwIn)
+		return nullptr;
+	memcpy(fftwIn, source, fftSize * sizeof(fftwf_complex));
+	fftwf_execute_dft(fftwPlan, fftwIn, fftwIn);
+	return fftwIn;
 }

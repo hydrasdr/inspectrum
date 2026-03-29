@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
     QCommandLineParser parser;
     parser.setApplicationDescription(APP_NAME " - spectrum viewer");
     parser.addHelpOption();
-    parser.addPositionalArgument("file", QCoreApplication::translate("main", "File to view."));
+    parser.addPositionalArgument("file", QCoreApplication::translate("main", "File to view (IQ data, .wav, .isession, or .sigmf-meta)."));
 
     // Add options
     QCommandLineOption rateOption(QStringList() << "r" << "rate",
@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
                                   QCoreApplication::translate("main", "Hz"));
     parser.addOption(rateOption);
     QCommandLineOption formatOption(QStringList() << "f" << "format",
-                                  QCoreApplication::translate("main", "Set file format, options: cfile/cf32/fc32, cf64/fc64, cs32/sc32/c32, cs16/sc16/c16, cs8/sc8/c8, cu8/uc8, f32, f64, s16, s8, u8, sigmf-meta/sigmf-data."),
+                                  QCoreApplication::translate("main", "Set file format, options: cfile/cf32/fc32, cf64/fc64, cs32/sc32/c32, cs16/sc16/c16, cs8/sc8/c8, cu8/uc8, f32, f64, s16, s8, u8, sigmf-meta/sigmf-data, wav."),
                                   QCoreApplication::translate("main", "fmt"));
     parser.addOption(formatOption);
 
@@ -83,8 +83,12 @@ int main(int argc, char *argv[])
     }
 
     const QStringList args = parser.positionalArguments();
-    if (args.size()>=1)
-        mainWin.openFile(args.at(0));
+    if (args.size()>=1) {
+        if (args.at(0).endsWith(".isession", Qt::CaseInsensitive))
+            mainWin.loadSessionFile(args.at(0));
+        else
+            mainWin.openFile(args.at(0));
+    }
 
     if (parser.isSet(rateOption)) {
         bool ok;
@@ -99,5 +103,6 @@ int main(int argc, char *argv[])
     mainWin.show();
     int ret = a.exec();
     FFT::saveWisdom();
+    FFT::cleanup();
     return ret;
 }

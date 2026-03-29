@@ -28,6 +28,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QCheckBox>
+#include <QTimer>
 #include <QLabel>
 
 class SpectrogramControls : public QDockWidget
@@ -138,6 +139,12 @@ public:
     int renderMin = INT_MAX, renderMax = 0;
     double renderSum = 0;
     int renderCount = 0;
+
+    /* debounced QSettings persistence (avoids I/O on every slider tick) */
+    QTimer settingsSaveTimer;
+    bool settingsDirty = false;
+    void markSettingsDirty();
+    void flushSettings();
     QCheckBox *scalesCheckBox;
     QCheckBox *annosCheckBox;
     QCheckBox *commentsCheckBox;

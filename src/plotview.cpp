@@ -431,7 +431,8 @@ bool PlotView::viewportEvent(QEvent *event) {
             auto mouse_event = QMouseEvent(
                 event->type(),
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-                QPoint(mouseEvent->position().x(), mouseEvent->position().y() - plotY),
+                QPointF(mouseEvent->position().x(), mouseEvent->position().y() - plotY),
+                mouseEvent->globalPosition(),
 #else
                 QPoint(mouseEvent->pos().x(), mouseEvent->pos().y() - plotY),
 #endif
@@ -700,7 +701,7 @@ void PlotView::exportTunerFiltered()
         return;
 
     /* create rational resampler (liquid-dsp)
-     * destroyed at end of function — all early exits are above */
+     * destroyed at end of function -- all early exits are above */
     msresamp_crcf resampler = msresamp_crcf_create(resampRate, 60.0f);
     if (!resampler)
         return;
@@ -840,7 +841,7 @@ void PlotView::exportSpectrogramPng()
     /* remove clip so scales can draw outside the spectrogram area */
     painter.setClipping(false);
 
-    /* draw time scales on top and bottom — same logic as paintTimeScale */
+    /* draw time scales on top and bottom -- same logic as paintTimeScale */
     if (sampleRate > 0) {
         float startTime = (float)viewRange.minimum / sampleRate;
         float stopTime = (float)viewRange.maximum / sampleRate;
@@ -1181,7 +1182,7 @@ DetectResult PlotView::autoDetectSymbolRate(DemodMode mode)
     }
 
     /*
-     * Detection pipeline: smooth → Schmitt trigger → run lengths
+     * Detection pipeline: smooth -> Schmitt trigger -> run lengths
      */
     size_t smoothWin = std::max(len / 500, (size_t)3);
     std::vector<float> smooth(len);
@@ -1452,7 +1453,7 @@ void PlotView::jumpToFreq(double freqHz)
     int fft = spectrogramPlot->getFFTSize();
     if (fft <= 0) return;
 
-    /* frequency → FFT bin */
+    /* frequency -> FFT bin */
     int bin = (int)((0.5 - freqHz / sampleRate) * fft);
 
     /* scroll so this bin is at the center of the viewport */
@@ -1477,7 +1478,6 @@ void PlotView::paintEvent(QPaintEvent *)
     QPainter painter(viewport());
     painter.fillRect(rect, Qt::black);
 
-
 #define PLOT_LAYER(paintFunc)                                                   \
     {                                                                           \
         int y = -verticalScrollBar()->value();                                  \
@@ -1491,13 +1491,13 @@ void PlotView::paintEvent(QPaintEvent *)
     PLOT_LAYER(paintBack);
     PLOT_LAYER(paintMid);
     PLOT_LAYER(paintFront);
+
     if (cursorsEnabled)
         cursors.paintFront(painter, rect, viewRange);
 
     if (timeScaleEnabled) {
         paintTimeScale(painter, rect, viewRange);
     }
-
 
 #undef PLOT_LAYER
 }
@@ -1613,7 +1613,7 @@ void PlotView::updateViewRange(bool reCenter)
     if (mainSampleSource == nullptr)
         return;
 
-    // Update current view — don't clamp end to file size so
+    // Update current view -- don't clamp end to file size so
     // TracePlots use the same samplesPerColumn as the spectrogram
     auto start = columnToSample(horizontalScrollBar()->value());
     size_t viewLen = columnToSample(width());
@@ -1746,7 +1746,7 @@ void PlotView::setTunerCentreHz(double hz)
     if (fft <= 0)
         return;
 
-    /* CF in Hz → FFT bin: centre = (0.5 - cf/sampleRate) * fftSize */
+    /* CF in Hz -> FFT bin: centre = (0.5 - cf/sampleRate) * fftSize */
     int bin = (int)((0.5 - hz / sampleRate) * fft + 0.5);
     spectrogramPlot->setTunerCentre(bin);
     spectrogramPlot->tunerFullUpdate();
@@ -1762,7 +1762,7 @@ void PlotView::setTunerBandwidthHz(double hz)
     if (fft <= 0)
         return;
 
-    /* BW in Hz → deviation in bins: dev = bw/2 / sampleRate * fftSize */
+    /* BW in Hz -> deviation in bins: dev = bw/2 / sampleRate * fftSize */
     int dev = (int)(hz / 2.0 / sampleRate * fft + 0.5);
     if (dev < 1)
         dev = 1;
@@ -1785,7 +1785,7 @@ QJsonArray PlotView::getDerivedPlotsState()
 
 void PlotView::restoreSessionPlots(const QJsonArray &plotsArray)
 {
-    /* clear pixmap cache first — this ensures no TracePlot
+    /* clear pixmap cache first -- this ensures no TracePlot
      * tile render tasks are queued (they only start on cache miss
      * during paint, which we're not doing here) */
     QPixmapCache::clear();

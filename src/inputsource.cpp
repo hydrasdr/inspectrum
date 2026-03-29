@@ -230,8 +230,9 @@ InputSource::~InputSource()
 
 void InputSource::cleanup()
 {
-    if (mmapData != nullptr && inputFile != nullptr) {
-        inputFile->unmap(mmapData);
+    if (mmapBase != nullptr && inputFile != nullptr) {
+        inputFile->unmap(mmapBase);
+        mmapBase = nullptr;
         mmapData = nullptr;
     }
 
@@ -353,13 +354,121 @@ QJsonObject InputSource::readMetaData(const QString &filename)
     return root;
 }
 
+/*
+ * Parse a RIFF/WAV header from memory-mapped data.
+ * Supports IQ WAV files as produced by SDR++ and similar tools:
+ *   - PCM  (codec 1): uint8, int16, int32  (2-channel IQ)
+ *   - IEEE float (codec 3): float32         (2-channel IQ)
+ * Returns the byte offset where sample data begins.
+ * Sets sampleAdapter and sampleRate from the header.
+ */
+size_t InputSource::parseWavHeader(const uchar *data, size_t fileSize)
+{
+    if (fileSize < 44)
+        throw std::runtime_error("WAV file too small for header");
+
+    /* RIFF header */
+    if (memcmp(data, "RIFF", 4) != 0 || memcmp(data + 8, "WAVE", 4) != 0)
+        throw std::runtime_error("Not a valid WAV file");
+
+    /* Walk chunks to find "fmt " and "data" */
+    size_t pos = 12;
+    uint16_t audioFormat = 0;
+    uint16_t numChannels = 0;
+    uint32_t wavSampleRate = 0;
+    uint16_t bitsPerSample = 0;
+    size_t dataChunkOffset = 0;
+    size_t dataChunkSize = 0;
+    bool foundFmt = false;
+    bool foundData = false;
+
+    while (pos + 8 <= fileSize) {
+        uint32_t chunkSize;
+        memcpy(&chunkSize, data + pos + 4, 4);
+
+        if (memcmp(data + pos, "fmt ", 4) == 0) {
+            if (chunkSize < 16 || pos + 8 + chunkSize > fileSize)
+                throw std::runtime_error("WAV fmt chunk too small");
+            memcpy(&audioFormat, data + pos + 8, 2);
+            memcpy(&numChannels, data + pos + 10, 2);
+            memcpy(&wavSampleRate, data + pos + 12, 4);
+            memcpy(&bitsPerSample, data + pos + 22, 2);
+            foundFmt = true;
+        }
+        else if (memcmp(data + pos, "data", 4) == 0) {
+            dataChunkOffset = pos + 8;
+            dataChunkSize = chunkSize;
+            foundData = true;
+            break;
+        }
+
+        pos += 8 + chunkSize;
+        /* Chunks are word-aligned */
+        if (chunkSize & 1) pos++;
+    }
+
+    if (!foundFmt)
+        throw std::runtime_error("WAV file missing fmt chunk");
+    if (!foundData)
+        throw std::runtime_error("WAV file missing data chunk");
+
+    if (numChannels != 2)
+        throw std::runtime_error("IQ WAV file must have 2 channels (I/Q), got "
+                                 + std::to_string(numChannels));
+
+    /* Select adapter based on codec + bit depth */
+    if (audioFormat == 1) { /* PCM */
+        switch (bitsPerSample) {
+        case 8:
+            sampleAdapter = std::make_unique<ComplexU8SampleAdapter>();
+            break;
+        case 16:
+            sampleAdapter = std::make_unique<ComplexS16SampleAdapter>();
+            break;
+        case 32:
+            sampleAdapter = std::make_unique<ComplexS32SampleAdapter>();
+            break;
+        default:
+            throw std::runtime_error("WAV: unsupported PCM bit depth "
+                                     + std::to_string(bitsPerSample));
+        }
+    }
+    else if (audioFormat == 3) { /* IEEE float */
+        if (bitsPerSample == 32)
+            sampleAdapter = std::make_unique<ComplexF32SampleAdapter>();
+        else
+            throw std::runtime_error("WAV: unsupported float bit depth "
+                                     + std::to_string(bitsPerSample));
+    }
+    else {
+        throw std::runtime_error("WAV: unsupported audio format "
+                                 + std::to_string(audioFormat));
+    }
+
+    setSampleRate(static_cast<double>(wavSampleRate));
+
+    /* Clamp data size to actual file */
+    if (dataChunkOffset + dataChunkSize > fileSize)
+        dataChunkSize = fileSize - dataChunkOffset;
+
+    sampleCount = dataChunkSize / sampleAdapter->sampleSize();
+
+    return dataChunkOffset;
+}
+
 void InputSource::openFile(const char *filename)
 {
     fileName = QString::fromUtf8(filename);
     QFileInfo fileInfo(filename);
     std::string suffix = std::string(fileInfo.suffix().toLower().toUtf8().constData());
     if (_fmt != "") { suffix = _fmt; } // allow fmt override
-    if ((suffix == "cfile") || (suffix == "cf32")  || (suffix == "fc32")) {
+    dataOffset = 0;
+    _realSignal = false;
+
+    if (suffix == "wav") {
+        /* WAV files are parsed after mmap; adapter set by parseWavHeader */
+    }
+    else if ((suffix == "cfile") || (suffix == "cf32")  || (suffix == "fc32")) {
         sampleAdapter = std::make_unique<ComplexF32SampleAdapter>();
     }
     else if ((suffix == "cf64")  || (suffix == "fc64")) {
@@ -437,16 +546,22 @@ void InputSource::openFile(const char *filename)
     }
 
     auto size = file->size();
-    sampleCount = size / sampleAdapter->sampleSize();
 
     auto data = file->map(0, size);
     if (data == nullptr)
         throw std::runtime_error("Error mmapping file");
 
+    if (suffix == "wav") {
+        dataOffset = parseWavHeader(data, size);
+    } else {
+        sampleCount = size / sampleAdapter->sampleSize();
+    }
+
     cleanup();
 
     inputFile = file.release();
-    mmapData = data;
+    mmapBase = data;
+    mmapData = data + dataOffset;
 
     invalidate();
 }
@@ -484,6 +599,23 @@ std::unique_ptr<std::complex<float>[]> InputSource::getSamples(size_t start, siz
         dest[i] = {0, 0};
 
     return dest;
+}
+
+bool InputSource::getSamples(size_t start, size_t length, std::complex<float>* dest)
+{
+    if (inputFile == nullptr || mmapData == nullptr)
+        return false;
+
+    if (length == 0 || start >= sampleCount)
+        return false;
+
+    size_t available = std::min(length, sampleCount - start);
+    sampleAdapter->copyRange(mmapData, start, available, dest);
+
+    if (available < length)
+        memset(&dest[available], 0, (length - available) * sizeof(std::complex<float>));
+
+    return true;
 }
 
 void InputSource::setFormat(std::string fmt){

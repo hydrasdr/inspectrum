@@ -18,7 +18,6 @@
  */
 
 #include <QPixmapCache>
-#include <QTextStream>
 #include <QtConcurrent>
 #include <QPainterPath>
 #include "samplesource.h"
@@ -58,21 +57,25 @@ void TracePlot::paintMid(QPainter &painter, QRect &rect, range_t<size_t> sampleR
 
 QPixmap TracePlot::getTile(size_t tileID, size_t sampleCount)
 {
-    QPixmap pixmap(tileWidth, height());
-    QString key;
-    QTextStream(&key) << "traceplot_" << this << "_" << tileID << "_" << sampleCount;
+    QString key = QStringLiteral("tp_%1_%2_%3")
+        .arg((quintptr)this, 0, 16)
+        .arg(tileID)
+        .arg(sampleCount);
+
+    QPixmap pixmap;
     if (QPixmapCache::find(key, &pixmap))
         return pixmap;
 
     if (!tasks.contains(key)) {
         range_t<size_t> sampleRange{tileID * sampleCount, (tileID + 1) * sampleCount};
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        QtConcurrent::run(&TracePlot::drawTile, this, key, QRect(0, 0, tileWidth, height()), sampleRange);
+        (void)QtConcurrent::run(&TracePlot::drawTile, this, key, QRect(0, 0, tileWidth, height()), sampleRange);
 #else
         QtConcurrent::run(this, &TracePlot::drawTile, key, QRect(0, 0, tileWidth, height()), sampleRange);
 #endif
         tasks.insert(key);
     }
+    pixmap = QPixmap(tileWidth, height());
     pixmap.fill(Qt::transparent);
     return pixmap;
 }

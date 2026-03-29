@@ -38,12 +38,15 @@ private:
     QString fileName;
     size_t sampleCount = 0;
     double sampleRate = 0.0;
+    uchar *mmapBase = nullptr;
     uchar *mmapData = nullptr;
     std::unique_ptr<SampleAdapter> sampleAdapter;
     std::string _fmt;
     bool _realSignal = false;
+    size_t dataOffset = 0;
 
     QJsonObject readMetaData(const QString &filename);
+    size_t parseWavHeader(const uchar *data, size_t fileSize);
 
 public:
     InputSource();
@@ -51,6 +54,7 @@ public:
     void cleanup();
     void openFile(const char *filename);
     std::unique_ptr<std::complex<float>[]> getSamples(size_t start, size_t length);
+    bool getSamples(size_t start, size_t length, std::complex<float>* dest);
     size_t count() {
         return sampleCount;
     };
