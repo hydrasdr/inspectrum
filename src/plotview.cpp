@@ -1350,10 +1350,16 @@ void PlotView::setFFTAndZoom(int size, int zoom)
 {
     auto oldSamplesPerColumn = samplesPerColumn();
 
-    double timeSec = 0, freqHz = 0;
-    saveViewPosition(timeSec, freqHz);
+    /* Save vertical position so we can restore it after FFT size changes */
+    double freqHz = 0;
+    bool fftChanged = (size != fftSize);
+    if (spectrogramPlot && spectrogramPlot->getFFTSize() > 0 && sampleRate > 0) {
+        int vCenter = verticalScrollBar()->value() + viewport()->height() / 2;
+        freqHz = (0.5 - (double)vCenter / spectrogramPlot->getFFTSize())
+                 * sampleRate;
+    }
 
-    if (size != fftSize) {
+    if (fftChanged) {
         fftSize = size;
         if (spectrogramPlot != nullptr)
             spectrogramPlot->setFFTSize(size);
@@ -1370,9 +1376,19 @@ void PlotView::setFFTAndZoom(int size, int zoom)
     if (samplesPerColumn() != oldSamplesPerColumn)
         QPixmapCache::clear();
 
-    updateView(false, samplesPerColumn() < oldSamplesPerColumn);
+    /* reCenter=true so the zoom anchors on zoomSample/zoomPos
+       (set by the wheel handler to the mouse cursor position) */
+    updateView(true, samplesPerColumn() < oldSamplesPerColumn);
 
-    restoreViewPosition(timeSec, freqHz);
+    /* Restore vertical position when FFT size changes */
+    if (fftChanged && spectrogramPlot && spectrogramPlot->getFFTSize() > 0
+        && sampleRate > 0) {
+        int newFFT = spectrogramPlot->getFFTSize();
+        int centerBin = (int)((0.5 - freqHz / sampleRate) * newFFT);
+        int vVal = centerBin - viewport()->height() / 2;
+        verticalScrollBar()->setValue(
+            std::max(0, std::min(vVal, verticalScrollBar()->maximum())));
+    }
 }
 
 void PlotView::setPowerMin(int power)

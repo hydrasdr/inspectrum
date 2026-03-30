@@ -129,6 +129,7 @@ Performance
 Bug fixes (v0.5.2)
 ------------------
 - Noise floor: percentile interpolation (nth_element range)
+- Ctrl+wheel zoom now anchors on mouse cursor X position instead of viewport center
 
 Bug fixes (v0.5.1)
 ------------------
