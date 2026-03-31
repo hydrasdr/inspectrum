@@ -37,7 +37,7 @@ void FrequencyDemod::work(void *input, void *output, int count, size_t)
     auto out = static_cast<float*>(output);
 
     /* recreate only if bandwidth changed, otherwise reset */
-    float bw = relativeBandwidth() / 2.0f;
+    float bw = std::max(relativeBandwidth() / 2.0f, 0.01f);
     if (!fdem || bw != lastBw) {
         if (fdem)
             freqdem_destroy(fdem);

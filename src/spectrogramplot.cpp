@@ -412,9 +412,12 @@ QPixmap* SpectrogramPlot::getPixmapTile(size_t tile)
     /* during rapid zoom, skip expensive tile computation --
      * return empty tile, real tiles render when zoom settles */
     if (zoomDeferred) {
-        static QPixmap deferredPixmap(1, 1);
-        deferredPixmap.fill(Qt::black);
-        return &deferredPixmap;
+        static QPixmap *deferredPixmap = nullptr;
+        if (!deferredPixmap) {
+            deferredPixmap = new QPixmap(1, 1);
+            deferredPixmap->fill(Qt::black);
+        }
+        return deferredPixmap;
     }
 
     float *fftTile = getEnhancedTile(tile);
@@ -451,15 +454,24 @@ QPixmap* SpectrogramPlot::getPixmapTile(size_t tile)
 #if INSPECTRUM_PROFILE
     qint64 pm_convert = pmTimer.nsecsElapsed();
 #endif
-    int pmCostKB = (int)((size_t)lpt * fftSize * 4 / 1024);
-    pixmapCache.insert(TileCacheKey(fftSize, zoomLevel, tile, overlapIndex), obj,
-                       std::max(pmCostKB, 1));
+    int pmCostKB = (int)((size_t)lpt * (size_t)fftSize * 4 / 1024);
+    TileCacheKey key(fftSize, zoomLevel, tile, overlapIndex);
+    if (!pixmapCache.insert(key, obj, std::max(pmCostKB, 1))) {
+        /* cache rejected the entry (cost > maxCost) -- obj was deleted.
+         * Return a safe fallback. */
+        static QPixmap *fallback = nullptr;
+        if (!fallback) {
+            fallback = new QPixmap(1, 1);
+            fallback->fill(Qt::black);
+        }
+        return fallback;
+    }
 #if INSPECTRUM_PROFILE
     qDebug("[PROFILE PIXMAP] fft=%d lpt=%d | alloc=%lld fill=%lld convert=%lld total=%lld us",
            fftSize, lpt, pm_alloc/1000, pm_fill/1000, pm_convert/1000,
            (pm_alloc+pm_fill+pm_convert)/1000);
 #endif
-    return obj;
+    return pixmapCache.object(key);
 }
 
 float* SpectrogramPlot::getFFTTile(size_t tile)
@@ -635,6 +647,29 @@ int SpectrogramPlot::linesPerTile()
         return targetLinesPerTile;
     int lpt = targetTileBytes / (fftSize * (int)sizeof(float));
     return std::max(lpt, targetLinesPerTile);
+}
+
+int SpectrogramPlot::getVisibleBinTop()
+{
+    int visibleBins;
+
+    if (maskOutOfBand && tunerEnabled()) {
+        visibleBins = tuner.deviation() * 2 / yZoomLevel;
+        if (visibleBins < 2)
+            visibleBins = 2;
+        if (visibleBins > fftSize)
+            visibleBins = fftSize;
+    } else {
+        visibleBins = fftSize / yZoomLevel;
+    }
+
+    int yTop = tuner.centre() - visibleBins / 2;
+    if (yTop < 0)
+        yTop = 0;
+    if (yTop + visibleBins > fftSize)
+        yTop = fftSize - visibleBins;
+
+    return yTop;
 }
 
 int SpectrogramPlot::getNativePlotHeight()
@@ -1083,21 +1118,27 @@ void SpectrogramPlot::tunerMoved()
 
 void SpectrogramPlot::tunerFullUpdate()
 {
-    /* skip all expensive work while still dragging -- only
-     * update when the user releases the mouse button */
-    if (tuner.isDragging()) {
-        tunerUpdateTimer.start(100); /* retry later */
-        return;
-    }
-
     int fullHeight = inputSource->realSignal() ? fftSize / 2 : fftSize;
 
+    /* Always update tuner transform so derived plots (amplitude,
+     * frequency, threshold) refresh in real-time during drag */
     tunerTransform->setFrequency(getTunerPhaseInc());
     tunerTransform->setTaps(getTunerTaps());
     tunerTransform->setRelativeBandwith(
         tuner.deviation() * 2.0 / std::max(fullHeight, 1));
 
-    updateHeight();
     QPixmapCache::clear();
+
+    if (tuner.isDragging()) {
+        /* Skip updateHeight() during drag -- changing the height
+         * causes a feedback loop (height change -> coordinate
+         * mapping change -> cursor jumps). Height is updated
+         * when the user releases the mouse button. */
+        tunerUpdateTimer.start(100); /* retry later */
+        emit repaint();
+        return;
+    }
+
+    updateHeight();
     emit repaint();
 }

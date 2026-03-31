@@ -47,7 +47,7 @@ template<typename T>
 class SampleSource : public AbstractSampleSource
 {
 protected:
-    double frequency;
+    double frequency = 0.0;
 
 public:
     virtual ~SampleSource() {};

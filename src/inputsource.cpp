@@ -231,16 +231,13 @@ InputSource::~InputSource()
 
 void InputSource::cleanup()
 {
-    if (mmapBase != nullptr && inputFile != nullptr) {
+    if (mmapBase != nullptr && inputFile) {
         inputFile->unmap(mmapBase);
         mmapBase = nullptr;
         mmapData = nullptr;
     }
 
-    if (inputFile != nullptr) {
-        delete inputFile;
-        inputFile = nullptr;
-    }
+    inputFile.reset();
 }
 
 QJsonObject InputSource::readMetaData(const QString &filename)
@@ -317,7 +314,7 @@ QJsonObject InputSource::readMetaData(const QString &filename)
         size_t offset = 0;
 
         if (global.contains("core:offset")) {
-            offset = global["offset"].toDouble();
+            offset = global["core:offset"].toDouble();
         }
 
         auto annotations = root["annotations"].toArray();
@@ -387,8 +384,19 @@ size_t InputSource::parseWavHeader(const uchar *data, size_t fileSize)
         uint32_t chunkSize;
         memcpy(&chunkSize, data + pos + 4, 4);
 
+        /* Validate chunk size against remaining file data */
+        if ((size_t)chunkSize > fileSize - pos - 8) {
+            /* data chunk may extend past reported size -- handle below */
+            if (memcmp(data + pos, "data", 4) == 0) {
+                dataChunkOffset = pos + 8;
+                dataChunkSize = fileSize - pos - 8;
+                foundData = true;
+            }
+            break; /* truncated chunk, stop walking */
+        }
+
         if (memcmp(data + pos, "fmt ", 4) == 0) {
-            if (chunkSize < 16 || pos + 8 + chunkSize > fileSize)
+            if (chunkSize < 16)
                 throw std::runtime_error("WAV fmt chunk too small");
             memcpy(&audioFormat, data + pos + 8, 2);
             memcpy(&numChannels, data + pos + 10, 2);
@@ -553,15 +561,20 @@ void InputSource::openFile(const char *filename)
     if (data == nullptr)
         throw std::runtime_error("Error mmapping file");
 
-    if (suffix == "wav") {
-        dataOffset = parseWavHeader(data, size);
-    } else {
-        sampleCount = size / sampleAdapter->sampleSize();
+    try {
+        if (suffix == "wav") {
+            dataOffset = parseWavHeader(data, size);
+        } else {
+            sampleCount = size / sampleAdapter->sampleSize();
+        }
+    } catch (...) {
+        file->unmap(data);
+        throw;
     }
 
     cleanup();
 
-    inputFile = file.release();
+    inputFile = std::move(file);
     mmapBase = data;
     mmapData = data + dataOffset;
 

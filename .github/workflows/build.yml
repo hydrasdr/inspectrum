@@ -340,27 +340,27 @@ jobs:
         echo "=== Release assets ==="
         ls -lh release/
 
-    - name: Delete existing nightly release
+    - name: Update nightly release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ needs.extract-version.outputs.version }}
       run: |
-        echo "Deleting existing nightly release..."
-        gh release delete nightly -R ${{ github.repository }} --yes --cleanup-tag 2>/dev/null || echo "No existing nightly release"
-
-    - name: Create nightly release
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        VERSION=${{ needs.extract-version.outputs.version }}
+        # Delete existing nightly release+tag, then recreate with
+        # new assets pointing at the current commit.
+        if gh release view nightly -R ${{ github.repository }} &>/dev/null; then
+          echo "Deleting existing nightly release..."
+          gh release delete nightly -R ${{ github.repository }} --yes --cleanup-tag 2>/dev/null || true
+        fi
 
         echo "Creating nightly release..."
         gh release create nightly -R ${{ github.repository }} \
+          --target ${{ github.sha }} \
           --title "Nightly Build (v${VERSION})" \
-          --notes "Automated nightly build from CI - Built from commit ${{ github.sha }}" \
+          --notes "Uploading assets..." \
           --prerelease
 
         echo "Uploading release assets..."
-        gh release upload nightly release/* -R ${{ github.repository }}
+        gh release upload nightly release/* -R ${{ github.repository }} --clobber
 
     - name: Update release notes
       env:

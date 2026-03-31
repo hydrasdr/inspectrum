@@ -35,7 +35,7 @@ public:
 class InputSource : public SampleSource<std::complex<float>>
 {
 private:
-    QFile *inputFile = nullptr;
+    std::unique_ptr<QFile> inputFile;
     QString fileName;
     size_t sampleCount = 0;
     double sampleRate = 0.0;
@@ -47,9 +47,9 @@ private:
     size_t dataOffset = 0;
 
     QJsonObject readMetaData(const QString &filename);
-    size_t parseWavHeader(const uchar *data, size_t fileSize);
 
 public:
+    size_t parseWavHeader(const uchar *data, size_t fileSize);
     InputSource();
     ~InputSource();
     void cleanup();

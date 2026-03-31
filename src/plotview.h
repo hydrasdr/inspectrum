@@ -81,6 +81,7 @@ public slots:
     void setOffset(double seconds);
     void restoreSessionPlots(const QJsonArray &plotsArray);
     void refreshThresholdPlots();
+    void invalidateThresholdData();
     void setSelectedSamples(range_t<size_t> samples);
     void setScrollPosition(int hValue, int vValue);
     range_t<size_t> getSelectedSamples() { return selectedSamples; }
@@ -144,9 +145,10 @@ private:
     bool hadCursors = false;
     range_t<size_t> savedSelectedSamples = {0, 0};
     double sampleRate = 0.0;
-    bool timeScaleEnabled;
+    bool timeScaleEnabled = false;
     int scrollZoomStepsAccumulated = 0;
-    bool annotationCommentsEnabled;
+    bool zoomFromWheel = false;
+    bool annotationCommentsEnabled = false;
 
     void addPlot(Plot *plot);
     void emitTimeSelection();

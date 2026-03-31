@@ -65,6 +65,8 @@ public:
     void setTunerCentre(int centre) { tuner.setCentre(centre); }
     void setTunerDeviation(int dev) { tuner.setDeviation(dev); }
     int getFFTSize() { return fftSize; }
+    int getZoomY() { return yZoomLevel; }
+    int getVisibleBinTop();
     int getStride();
     int getNativePlotHeight();
     using Plot::setHeight;

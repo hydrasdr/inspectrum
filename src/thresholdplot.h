@@ -32,6 +32,7 @@ public:
 			range_t<size_t> sampleRange) override;
 	void setCursorInfo(bool enabled, range_t<size_t> selectedSamples,
 			   int segments);
+	void invalidateBitsCache() { bitsCacheDirty = true; }
 	void setLsbFirst(bool lsb) { lsbFirst = lsb; bitsCacheDirty = true; }
 	bool isLsbFirst() const { return lsbFirst; }
 

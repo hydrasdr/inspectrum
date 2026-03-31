@@ -5,13 +5,13 @@ Fork of inspectrum v0.4.0 with 56 files changed (~6800 lines added).
 
 Features (v0.5.0)
 ------------------
- 1. ThresholdPlot: bin/hex/ascii overlay on threshold waveform, export to clipboard/stdout
- 2. Editable symbol rate, period, offset with SI suffix support (k, M, G)
+ 1. ThresholdPlot: bin/hex/ascii overlay on threshold waveform, export to clipboard
+ 2. Editable symbol rate (with SI suffix support), period, offset
  3. Auto detect symbol rate (ASK/OOK) via Schmitt trigger + run-length analysis
  4. Session save/load (.isession v0.5.0 JSON format)
  5. Drag & drop file loading
  6. Spectrogram Y zoom (frequency crop centered on tuner)
- 7. FFT zero-padding (separate window/FFT size)
+ 7. FFT zero-padding (extends FFT size beyond window size)
  8. Crop to tuner (physical height change, drag offset locking)
  9. Tuner panel: editable centre/bandwidth with SI, visibility toggle
 10. Export tuner-filtered with rational resampler (liquid-dsp msresamp_crcf)
@@ -23,54 +23,56 @@ Features (v0.5.0)
 16. Tuner default center position
 17. View position (Pos X/Y editable, bookmarks with add/update/remove)
 18. Bookmarks saved in .isession, loadable from .json
-19. SI unit display and input for all Hz/Bd fields
+19. SI unit display and input for Hz/Bd fields
 20. Bottom time scale (on screen and PNG export)
 21. View position preserved across FFT/zoom/zero-pad changes
 22. Bit order toggle (LSB first)
 
 New features (v0.5.1) — Advanced Spectrogram & Signal Analysis
 --------------------------------------------------------------
-23. FFT overlap control (0%, 25%, 50%, 75%, 87.5%)
+24. FFT overlap control (0%, 25%, 50%, 75%, 87.5%)
     - Configurable hop size for smoother chirp/swept signal display
     - 4x more FFT columns at 75% overlap, 8x at 87.5%
-24. Window function selector (6 types)
+25. Window function selector (6 types)
     - Hann, Hamming, Blackman-Harris (-92 dB sidelobes),
       Kaiser (adjustable beta 0-30), Flat-top (amplitude accuracy),
       Rectangular
-25. Extended zero-padding (1x to 64x)
+26. Extended zero-padding (1x to 64x)
     - Smooth frequency interpolation for narrow spectral features
-26. Averaging modes (5 modes)
+27. Averaging modes (5 modes)
     - Off, Linear (box filter), Exponential (adjustable alpha decay),
       Max hold (peak envelope), Min hold (noise floor mapping)
     - Max/Min hold use O(n) monotonic deque algorithm
-27. Noise floor estimation & subtraction
+28. Noise floor estimation & subtraction
     - Subtract (median), Subtract (percentile), Normalize
     - Per-frequency-bin estimation, flattens noise for weak signals
-28. Colormap selection (6 colormaps)
+29. Colormap selection (6 colormaps)
     - Default, Viridis, Inferno, Turbo, Magma, Grayscale
     - Perceptually uniform options for better dynamic range visibility
-29. Cursor lock (prevent accidental dragging while scrolling)
-30. Grid opacity controls all cursor elements (fill, grid, edges)
+30. Cursor lock (prevent accidental dragging while scrolling)
+31. Grid opacity controls all cursor elements (fill, grid, edges)
     - Opacity 0 = fully transparent (nothing drawn)
-31. Zoom Y works in crop-to-tuner mode (up to 32x)
-32. Scrollable controls dock (vertical scroll for many controls)
-33. Controls dock sized to fit at launch (user can shrink freely)
-34. Window starts at 50% screen width, 80% height, centered
+32. Zoom Y works in crop-to-tuner mode (up to 32x)
+33. Scrollable controls dock (vertical scroll for many controls)
+34. Controls dock sized to fit at launch (user can shrink freely)
+35. Window starts at 50% screen width, 80% height, centered
+36. WAV file support (RIFF/WAV header parsing, IQ 2-channel,
+    PCM 8/16/24/32-bit and IEEE float, SDR++ compatible)
 
 New features (v0.5.2) — Reassigned Spectrogram & Quality
 ---------------------------------------------------------
-35. Reassigned spectrogram
+37. Reassigned spectrogram
     - 3 FFTs per column (h, t*h, h') with energy redistribution
       to local time-frequency centroids (Auger & Flandrin 1995)
-    - Pure tone: 12x sharper than standard STFT (12 bins -> 1 bin)
-    - Chirp signals: 37% energy concentration improvement
+    - Pure tone: typically much sharper than standard STFT
+    - Chirp signals: improved energy concentration
     - Configurable energy threshold (1-120 dB below peak)
     - Based on Auger & Flandrin 1995 (IEEE TSP)
-36. Synchrosqueezed spectrogram
+38. Synchrosqueezed spectrogram
     - 2 FFTs per column (h, h'), frequency-only reassignment
     - Preserves time grid (invertible transform)
     - Same frequency sharpening as reassigned, 33% cheaper
-37. TracePlot min/max decimation
+39. TracePlot min/max decimation
     - Fixes missing vertical segments at all zoom levels
     - For each pixel column: draws min-to-max vertical line
     - Preserves OOK edges, FSK steps, fast transitions
@@ -130,6 +132,30 @@ Bug fixes (v0.5.2)
 ------------------
 - Noise floor: percentile interpolation (nth_element range)
 - Ctrl+wheel zoom now anchors on mouse cursor X position instead of viewport center
+- View position (Pos X/Y) now correctly preserved when changing FFT size, zero-pad,
+  overlap, zoom level (from slider), and crop-to-tuner toggle.
+  Root cause: updateView(reCenter=true) was designed for Ctrl+wheel zoom anchoring
+  but was used in all parameter-change paths, clobbering the scroll position with
+  stale mouse-wheel anchor data before restoreViewPosition could fix it.
+  Fix: reCenter=true now only used for Ctrl+wheel zoom; all other paths use
+  save → updateView(false) → restore. Added zoomFromWheel flag to distinguish
+  wheel zoom from slider zoom in setFFTAndZoom.
+- Zoom Y no longer zooms toward bottom of spectrogram.
+  Root cause: pixel-to-FFT-bin conversion in saveViewPosition/restoreViewPosition
+  assumed 1 pixel = 1 bin, ignoring the Y zoom crop window (yTop + visibleBins).
+  Fix: added getZoomY()/getVisibleBinTop() to SpectrogramPlot; save/restore and
+  View Pos Y display now use correct mapping: bin = yTop + pixel * fft / (plotH * zoomY).
+  Also fixed jumpToFreq() for the same issue.
+- ThresholdPlot bin/hex/dec overlay now refreshes when Power Max/Min changes.
+  Root cause: getTunerTaps() uses powerMax for filter gain, so changing power
+  changes the amplitude reaching the threshold plot, but bitsCacheDirty was never set.
+  Fix: added invalidateBitsCache() to ThresholdPlot; called from setPowerMax/Min,
+  tuner position changes, and PlotView::repaint() (covers all parameter changes).
+- Tuner BW/centre changes now update derived plots (amplitude, frequency, threshold)
+  in real-time during drag, not only on mouse release.
+  Root cause: tunerFullUpdate() skipped all processing while isDragging().
+  Fix: tuner transform parameters (frequency, taps, bandwidth) are now updated
+  during drag; only updateHeight() is deferred to avoid the feedback loop.
 
 Bug fixes (v0.5.1)
 ------------------
@@ -141,8 +167,8 @@ Bug fixes (v0.5.1)
 - QPixmapCache cleared when stride changes (FFT size, zoom, zero-pad, overlap)
 - Zoom Y now works in crop-to-tuner mode
 - Grid opacity 0 now fully hides all cursor elements
-- All -Wall -Wextra -Wpedantic warnings resolved (including pre-existing %zu,
-  memset on complex<float>, unused variables)
+- Pre-existing warnings resolved (including %zu, memset on complex<float>,
+  unused variables) when built with -Wall -Wextra -Wpedantic
 
 Bug fixes (v0.5.0)
 ------------------
@@ -155,7 +181,7 @@ All source files ASCII-only (except SI micro sign).
 Build
 -----
 MinGW: static linking (libgcc, libstdc++, -mwindows), Qt/runtime DLL bundling.
-FFTW before LIQUID link order for static libs.
+LIQUID before FFTW link order for static libs.
 Wisdom file next to exe (fallback to AppLocalDataLocation on read-only installs).
 Portable: builds on Windows (MinGW/MSVC), Linux, macOS.
 Zero warnings with -Wall -Wextra -Wpedantic on GCC/MinGW.

@@ -42,7 +42,9 @@ int Tuner::centre()
 
 void Tuner::cursorMoved()
 {
-    Cursor *sender = static_cast<Cursor*>(QObject::sender());
+    Cursor *sender = qobject_cast<Cursor*>(QObject::sender());
+    if (!sender)
+        return;
     if (sender != cfCursor) {
         // Limit cursor positions to within plot
         auto posRange = range_t<int>{0, std::max(height, 1)};

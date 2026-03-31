@@ -56,7 +56,8 @@ PlotView::PlotView(InputSource *input) : cursors(this), viewRange({0, 0})
     enableCursors(false);
     connect(&cursors, &Cursors::cursorsMoved, this, &PlotView::cursorsMoved);
 
-    spectrogramPlot = new SpectrogramPlot(std::shared_ptr<SampleSource<std::complex<float>>>(mainSampleSource));
+    spectrogramPlot = new SpectrogramPlot(std::shared_ptr<SampleSource<std::complex<float>>>(
+        mainSampleSource, [](SampleSource<std::complex<float>>*){}));
     auto tunerOutput = std::dynamic_pointer_cast<SampleSource<std::complex<float>>>(spectrogramPlot->output());
 
     /* forward tuner info and render time to controls panel */
@@ -309,6 +310,16 @@ void PlotView::refreshThresholdPlots()
     viewport()->update();
 }
 
+void PlotView::invalidateThresholdData()
+{
+    for (auto &&plot : plots) {
+        auto tp = dynamic_cast<ThresholdPlot *>(plot.get());
+        if (tp)
+            tp->invalidateBitsCache();
+    }
+    viewport()->update();
+}
+
 void PlotView::cursorsMoved()
 {
     int scrollVal = horizontalScrollBar()->value();
@@ -413,6 +424,7 @@ bool PlotView::viewportEvent(QEvent *event) {
                 zoomPos = wheelEvent->pos().x();
 #endif
                 zoomSample = columnToSample(horizontalScrollBar()->value() + zoomPos);
+                zoomFromWheel = true;
                 if (scrollZoomStepsAccumulated >= 120) {
                     scrollZoomStepsAccumulated -= 120;
                     emit zoomIn();
@@ -922,6 +934,13 @@ void PlotView::invalidateEvent()
 
 void PlotView::repaint()
 {
+    /* Invalidate threshold bit caches so bin/hex/dec overlays
+     * refresh when underlying data changes (tuner drag, etc.) */
+    for (auto &&plot : plots) {
+        auto tp = dynamic_cast<ThresholdPlot *>(plot.get());
+        if (tp)
+            tp->invalidateBitsCache();
+    }
     viewport()->update();
 }
 
@@ -1318,9 +1337,26 @@ void PlotView::saveViewPosition(double &timeSec, double &freqHz)
         timeSec = (double)centerSample / sampleRate;
     }
     if (spectrogramPlot && spectrogramPlot->getFFTSize() > 0 && sampleRate > 0) {
-        int vCenter = verticalScrollBar()->value() + viewport()->height() / 2;
-        freqHz = (0.5 - (double)vCenter / spectrogramPlot->getFFTSize())
-                 * sampleRate;
+        int fft = spectrogramPlot->getFFTSize();
+        int plotH = spectrogramPlot->height();
+        int zoomY = spectrogramPlot->getZoomY();
+        int yTop = spectrogramPlot->getVisibleBinTop();
+
+        /* viewport center pixel within the spectrogram plot */
+        int vCenter = verticalScrollBar()->value()
+                      + std::min(viewport()->height(), plotH) / 2;
+
+        /* convert pixel to FFT bin accounting for Y zoom crop:
+         * pixel p maps to bin = yTop + p * visibleBins / plotHeight
+         * where visibleBins / plotHeight = 1 / yZoomLevel
+         * (when plotHeight = fftSize in non-crop mode) */
+        double centerBin;
+        if (plotH > 0)
+            centerBin = yTop + (double)vCenter * fft / ((double)plotH * zoomY);
+        else
+            centerBin = vCenter;
+
+        freqHz = (0.5 - centerBin / fft) * sampleRate;
     }
 }
 
@@ -1334,11 +1370,26 @@ void PlotView::restoreViewPosition(double timeSec, double freqHz)
     int hVal = sampleToColumn(centerSample) - width() / 2;
     horizontalScrollBar()->setValue(std::max(0, hVal));
 
-    /* restore vertical: convert freq back to bin in new FFT size */
+    /* restore vertical: convert freq back to pixel position
+     * accounting for Y zoom crop */
     if (spectrogramPlot && spectrogramPlot->getFFTSize() > 0) {
-        int newFFT = spectrogramPlot->getFFTSize();
-        int centerBin = (int)((0.5 - freqHz / sampleRate) * newFFT);
-        int vVal = centerBin - viewport()->height() / 2;
+        int fft = spectrogramPlot->getFFTSize();
+        int plotH = spectrogramPlot->height();
+        int zoomY = spectrogramPlot->getZoomY();
+        int yTop = spectrogramPlot->getVisibleBinTop();
+
+        /* freq → FFT bin */
+        double centerBin = (0.5 - freqHz / sampleRate) * fft;
+
+        /* bin → pixel (inverse of save formula):
+         * pixel = (centerBin - yTop) * plotHeight * yZoomLevel / fft */
+        int vCenter;
+        if (fft > 0)
+            vCenter = (int)((centerBin - yTop) * (double)plotH * zoomY / fft);
+        else
+            vCenter = (int)centerBin;
+
+        int vVal = vCenter - std::min(viewport()->height(), plotH) / 2;
         verticalScrollBar()->setValue(
             std::max(0, std::min(vVal, verticalScrollBar()->maximum())));
     }
@@ -1349,15 +1400,27 @@ void PlotView::restoreViewPosition(double timeSec, double freqHz)
 void PlotView::setFFTAndZoom(int size, int zoom)
 {
     auto oldSamplesPerColumn = samplesPerColumn();
-
-    /* Save vertical position so we can restore it after FFT size changes */
-    double freqHz = 0;
     bool fftChanged = (size != fftSize);
-    if (spectrogramPlot && spectrogramPlot->getFFTSize() > 0 && sampleRate > 0) {
-        int vCenter = verticalScrollBar()->value() + viewport()->height() / 2;
-        freqHz = (0.5 - (double)vCenter / spectrogramPlot->getFFTSize())
-                 * sampleRate;
-    }
+    bool zoomChanged = (zoom != zoomLevel);
+    bool wheelZoom = zoomFromWheel;
+    zoomFromWheel = false; /* consume the flag */
+
+    /*
+     * Two distinct paths:
+     *
+     * A) Ctrl+wheel zoom (zoomChanged && wheelZoom && !fftChanged):
+     *    Anchor on mouse cursor via zoomSample/zoomPos set by the
+     *    wheel handler.  Use reCenter=true.  No save/restore.
+     *
+     * B) Everything else (FFT change, zoom-from-slider, or both):
+     *    Preserve the (time, freq) at the viewport center.
+     *    Use save → change → updateView(false) → restore.
+     */
+    bool useMouseAnchor = wheelZoom && zoomChanged && !fftChanged;
+
+    double timeSec = 0, freqHz = 0;
+    if (!useMouseAnchor)
+        saveViewPosition(timeSec, freqHz);
 
     if (fftChanged) {
         fftSize = size;
@@ -1376,18 +1439,13 @@ void PlotView::setFFTAndZoom(int size, int zoom)
     if (samplesPerColumn() != oldSamplesPerColumn)
         QPixmapCache::clear();
 
-    /* reCenter=true so the zoom anchors on zoomSample/zoomPos
-       (set by the wheel handler to the mouse cursor position) */
-    updateView(true, samplesPerColumn() < oldSamplesPerColumn);
-
-    /* Restore vertical position when FFT size changes */
-    if (fftChanged && spectrogramPlot && spectrogramPlot->getFFTSize() > 0
-        && sampleRate > 0) {
-        int newFFT = spectrogramPlot->getFFTSize();
-        int centerBin = (int)((0.5 - freqHz / sampleRate) * newFFT);
-        int vVal = centerBin - viewport()->height() / 2;
-        verticalScrollBar()->setValue(
-            std::max(0, std::min(vVal, verticalScrollBar()->maximum())));
+    if (useMouseAnchor) {
+        /* path A: anchor on mouse cursor */
+        updateView(true, samplesPerColumn() < oldSamplesPerColumn);
+    } else {
+        /* path B: preserve center position */
+        updateView(false);
+        restoreViewPosition(timeSec, freqHz);
     }
 }
 
@@ -1396,6 +1454,7 @@ void PlotView::setPowerMin(int power)
     powerMin = power;
     if (spectrogramPlot != nullptr)
         spectrogramPlot->setPowerMin(power);
+    invalidateThresholdData();
     updateView();
 }
 
@@ -1410,7 +1469,7 @@ void PlotView::setZeroPad(int level)
 
     spectrogramPlot->setZeroPad(factor);
     QPixmapCache::clear(); /* invalidate TracePlot tiles */
-    updateView(true);
+    updateView(false);
 
     restoreViewPosition(timeSec, freqHz);
 }
@@ -1425,7 +1484,7 @@ void PlotView::setZoomY(int level)
     saveViewPosition(timeSec, freqHz);
 
     spectrogramPlot->setZoomY(zoomY);
-    updateView();
+    updateView(false);
 
     restoreViewPosition(timeSec, freqHz);
 }
@@ -1439,17 +1498,16 @@ void PlotView::setTunerVisible(bool visible)
 
 void PlotView::setCropToTuner(bool enabled)
 {
-    if (spectrogramPlot != nullptr)
-        spectrogramPlot->enableMaskOutOfBand(enabled);
-    updateView();
+    if (spectrogramPlot == nullptr)
+        return;
 
-    /* when uncropping, scroll vertically to center on tuner */
-    if (!enabled && spectrogramPlot != nullptr) {
-        int tunerY = spectrogramPlot->tunerCentre();
-        int viewH = viewport()->height();
-        verticalScrollBar()->setValue(
-            std::max(0, tunerY - viewH / 2));
-    }
+    double timeSec = 0, freqHz = 0;
+    saveViewPosition(timeSec, freqHz);
+
+    spectrogramPlot->enableMaskOutOfBand(enabled);
+    updateView(false);
+
+    restoreViewPosition(timeSec, freqHz);
 }
 
 void PlotView::setAveraging(int count)
@@ -1466,7 +1524,7 @@ void PlotView::setOverlap(int index)
         saveViewPosition(timeSec, freqHz);
         spectrogramPlot->setOverlap(index);
         QPixmapCache::clear(); /* invalidate TracePlot tiles */
-        updateView(true);
+        updateView(false);
         restoreViewPosition(timeSec, freqHz);
     }
 }
@@ -1546,11 +1604,21 @@ void PlotView::jumpToFreq(double freqHz)
     if (fft <= 0) return;
 
     /* frequency -> FFT bin */
-    int bin = (int)((0.5 - freqHz / sampleRate) * fft);
+    double bin = (0.5 - freqHz / sampleRate) * fft;
 
-    /* scroll so this bin is at the center of the viewport */
-    int viewH = viewport()->height();
-    verticalScrollBar()->setValue(std::max(0, bin - viewH / 2));
+    /* bin -> pixel position accounting for Y zoom crop */
+    int plotH = spectrogramPlot->height();
+    int zoomY = spectrogramPlot->getZoomY();
+    int yTop = spectrogramPlot->getVisibleBinTop();
+    int vPixel;
+    if (fft > 0)
+        vPixel = (int)((bin - yTop) * (double)plotH * zoomY / fft);
+    else
+        vPixel = (int)bin;
+
+    /* scroll so this pixel is at the center of the viewport */
+    int viewH = std::min(viewport()->height(), plotH);
+    verticalScrollBar()->setValue(std::max(0, vPixel - viewH / 2));
     updateView();
 }
 
@@ -1559,6 +1627,7 @@ void PlotView::setPowerMax(int power)
     powerMax = power;
     if (spectrogramPlot != nullptr)
         spectrogramPlot->setPowerMax(power);
+    invalidateThresholdData();
     updateView();
 }
 
@@ -1733,12 +1802,24 @@ void PlotView::updateViewRange(bool reCenter)
         double timeSec = (double)start / sampleRate;
         double freqHz = 0;
         if (spectrogramPlot && spectrogramPlot->getFFTSize() > 0) {
-            /* frequency at center of visible spectrogram */
-            int vScroll = verticalScrollBar()->value();
+            /* frequency at center of visible spectrogram,
+             * accounting for Y zoom crop */
+            int fft = spectrogramPlot->getFFTSize();
             int plotH = spectrogramPlot->height();
-            int centerBin = vScroll + std::min(viewport()->height(), plotH) / 2;
-            freqHz = (0.5 - (double)centerBin / spectrogramPlot->getFFTSize())
-                     * sampleRate;
+            int zoomY = spectrogramPlot->getZoomY();
+            int yTop = spectrogramPlot->getVisibleBinTop();
+
+            int vPixel = verticalScrollBar()->value()
+                         + std::min(viewport()->height(), plotH) / 2;
+
+            double centerBin;
+            if (plotH > 0)
+                centerBin = yTop + (double)vPixel * fft
+                            / ((double)plotH * zoomY);
+            else
+                centerBin = vPixel;
+
+            freqHz = (0.5 - centerBin / fft) * sampleRate;
         }
         emit viewPositionChanged(timeSec, freqHz);
     }
@@ -1810,7 +1891,12 @@ size_t PlotView::columnToSample(int col)
 {
     if (col <= 0)
         return 0;
-    return (size_t)col * samplesPerColumn();
+    size_t spc = samplesPerColumn();
+    size_t result = (size_t)col * spc;
+    /* saturate on overflow */
+    if (spc != 0 && result / spc != (size_t)col)
+        return SIZE_MAX;
+    return result;
 }
 
 int PlotView::getTunerCentre()
@@ -1840,6 +1926,7 @@ void PlotView::setTunerPosition(int centre, int deviation)
         spectrogramPlot->setTunerDeviation(deviation);
         spectrogramPlot->setTunerCentre(centre);
         spectrogramPlot->tunerFullUpdate();
+        invalidateThresholdData();
     }
 }
 
@@ -1856,6 +1943,7 @@ void PlotView::setTunerCentreHz(double hz)
     int bin = (int)((0.5 - hz / sampleRate) * fft + 0.5);
     spectrogramPlot->setTunerCentre(bin);
     spectrogramPlot->tunerFullUpdate();
+    invalidateThresholdData();
     updateView();
 }
 
@@ -1874,6 +1962,7 @@ void PlotView::setTunerBandwidthHz(double hz)
         dev = 1;
     spectrogramPlot->setTunerDeviation(dev);
     spectrogramPlot->tunerFullUpdate();
+    invalidateThresholdData();
     updateView();
 }
 
