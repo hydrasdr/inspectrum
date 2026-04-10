@@ -1,4 +1,4 @@
-inspectrum ng v0.5.3-rc1
+inspectrum ng v0.5.3-rc2
 ========================
 
 Major update forked from inspectrum v0.4.0.
@@ -136,12 +136,14 @@ Performance
 
 Bug fixes (v0.5.3): Crash fix & stability
 --------------------------------------------
-- Fix crash (SIGILL) when adding any derived plot on CPUs without AVX-512
-  Root cause: liquid-dsp CI build auto-detected AVX-512 on the GitHub Actions
-  runner and compiled dotprod with AVX-512 only (no fallback). CPUs without
-  AVX-512 hit an illegal instruction in dotprod_crcf_execute_avx512f.
-  Fix: CI now caps liquid-dsp SIMD at AVX2 (-DFIND_SIMD=OFF -DC_AVX2_FOUND=TRUE).
-  (Reported by Norbert DL8LAQ, GitHub issue #1)
+- Fix crash (SIGILL) when adding derived plot on various CPU generations
+  rc1: CPUs without AVX-512 crashed (reported by Norbert DL8LAQ, issue #1)
+  rc2: CPUs with AVX but without AVX2 also crashed
+  Root cause: liquid-dsp dotprod compiled for a single SIMD level at build
+  time, or AVX variant compiled with AVX2+FMA flags.
+  Fix: liquid-dsp fork (bvernoux/liquid-dsp) now has runtime SIMD dispatch.
+  All variants (portable/SSE4.2/AVX2+FMA/AVX-512) compiled, best selected
+  via CPUID at startup. AVX-only CPUs use SSE4.2 fallback.
 - Hardened thread safety and shutdown (TunerTransform QMutex, PlotView
   destructor waits for worker threads, addPlot null guard, TracePlot
   worker exception guard)

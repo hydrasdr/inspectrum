@@ -4,7 +4,7 @@ enable_testing()
 
 # Pass version to source code
 add_definitions(
-    -DAPP_VERSION="${PROJECT_VERSION}-rc1"
+    -DAPP_VERSION="${PROJECT_VERSION}-rc2"
     -DAPP_NAME="inspectrum ng"
 )
 
