@@ -40,6 +40,7 @@
 
 #include <QCoreApplication>
 #include <QSysInfo>
+#include <liquid/liquid.h>
 
 /* ------------------------------------------------------------------ */
 /*  Internal state                                                     */
@@ -146,6 +147,12 @@ static std::string buildHeader(const char *appName, const char *appVersion)
 
 	/* Qt version */
 	h += std::string("  Qt        : ") + qVersion() + "\n";
+
+#ifdef __LIQUID_CPUID_H__
+	/* liquid-dsp SIMD level (only with bvernoux/liquid-dsp fork) */
+	h += std::string("  SIMD      : ")
+	     + liquid_simd_level_str(liquid_simd_get_level()) + "\n";
+#endif
 
 	h += std::string("  Session   : ") + timestamp() + "\n";
 	h += "========================================\n";

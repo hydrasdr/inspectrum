@@ -2,6 +2,10 @@ name: Build
 
 on:
   push:
+    tags:
+      - 'v*'
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -93,22 +97,46 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    # === Linux Dependencies ===
+    # Linux
     - name: Install dependencies (Linux)
       if: matrix.platform == 'linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libfftw3-dev libliquid-dev libgl1-mesa-dev ${{ matrix.qt_pkg }}
+        sudo apt-get install -y libfftw3-dev libgl1-mesa-dev ${{ matrix.qt_pkg }}
 
-    # === macOS Dependencies ===
+    - name: Build liquid-dsp (Linux)
+      if: matrix.platform == 'linux'
+      run: |
+        cd /tmp
+        git clone --depth 1 https://github.com/bvernoux/liquid-dsp.git
+        cd liquid-dsp
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+        cmake --build build --parallel
+        sudo cmake --install build
+
+    # macOS
     - name: Install dependencies (macOS)
       if: matrix.platform == 'macos'
       env:
         HOMEBREW_NO_AUTO_UPDATE: 1
         HOMEBREW_NO_INSTALL_CLEANUP: 1
-      run: brew install --quiet fftw liquid-dsp ${{ matrix.qt_brew }}
+      run: brew install --quiet fftw ${{ matrix.qt_brew }}
 
-    # === Windows Dependencies ===
+    - name: Build liquid-dsp (macOS)
+      if: matrix.platform == 'macos'
+      run: |
+        BREW_PREFIX=$(brew --prefix)
+        cd /tmp
+        git clone --depth 1 https://github.com/bvernoux/liquid-dsp.git
+        cd liquid-dsp
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+          -DCMAKE_PREFIX_PATH="$BREW_PREFIX" \
+          -DCMAKE_C_FLAGS="-I$BREW_PREFIX/include" \
+          -DCMAKE_EXE_LINKER_FLAGS="-L$BREW_PREFIX/lib"
+        cmake --build build -j4
+        sudo cmake --install build
+
+    # Windows
     - name: Setup MSYS2 (Windows)
       if: matrix.platform == 'windows'
       uses: msys2/setup-msys2@v2
@@ -131,24 +159,14 @@ jobs:
         cd /tmp
         git clone --depth 1 https://github.com/bvernoux/liquid-dsp.git
         cd liquid-dsp
-        # Cap SIMD at AVX2 (no AVX-512) so the binary runs on all
-        # x86-64 CPUs from ~2013 onwards.
-        # GitHub Actions runners have AVX-512 capable CPUs, but end-users may not.
         cmake -B build -G Ninja \
           -DCMAKE_INSTALL_PREFIX=/mingw64 \
           -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_SHARED_LIBS=OFF \
-          -DFIND_SIMD=OFF \
-          -DENABLE_SIMD=ON \
-          -DC_AVX512_FOUND=FALSE \
-          -DC_AVX2_FOUND=TRUE \
-          -DC_AVX2_FLAGS="-mavx2;-mfma;-mf16c"
+          -DBUILD_SHARED_LIBS=OFF
         cmake --build build
         cmake --install build
-        cp include/liquid_vla.h include/liquid_msvc_compat.h \
-           include/liquid_win32_compat.h /mingw64/include/liquid/
 
-    # === Configure ===
+    # Configure
     - name: Configure (Linux)
       if: matrix.platform == 'linux'
       run: cmake -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE
@@ -169,7 +187,7 @@ jobs:
           -DLIQUID_USE_STATIC=ON \
           -DCMAKE_PREFIX_PATH=/mingw64
 
-    # === Build ===
+    # Build
     - name: Build (Linux/macOS)
       if: matrix.platform != 'windows'
       run: cmake --build build --config $BUILD_TYPE --parallel
@@ -179,13 +197,13 @@ jobs:
       shell: msys2 {0}
       run: cmake --build build --parallel
 
-    # === Test ===
+    # Test
     - name: Test (Linux/macOS)
       if: matrix.platform != 'windows'
       working-directory: build
       run: ctest -C $BUILD_TYPE
 
-    # === Package ===
+    # Package
     - name: Package (Linux)
       if: matrix.platform == 'linux'
       run: |
@@ -238,7 +256,7 @@ jobs:
           cp /mingw64/bin/${dll}.dll "$DIST/" 2>/dev/null || true
         done
 
-        echo "=== Bundle contents ==="
+        echo "Bundle contents:"
         ls -lh "$DIST/"
         ls -lh "$DIST/platforms/"
         ls -lh "$DIST/styles/"
@@ -246,7 +264,7 @@ jobs:
         # Create tarball (converted to zip in nightly-release)
         tar czf "$DIST.tar.gz" "$DIST"
 
-    # === Upload ===
+    # Upload
     - name: Upload artifact
       uses: actions/upload-artifact@v7
       with:
@@ -287,7 +305,16 @@ jobs:
         export DEBIAN_FRONTEND=noninteractive
         export TZ=UTC
         apt-get install -y --no-install-recommends \
-          build-essential cmake pkg-config libfftw3-dev libliquid-dev libgl1-mesa-dev ${{ matrix.qt_pkg }}
+          build-essential cmake pkg-config libfftw3-dev libgl1-mesa-dev ${{ matrix.qt_pkg }}
+
+    - name: Build liquid-dsp
+      run: |
+        cd /tmp
+        git clone --depth 1 https://github.com/bvernoux/liquid-dsp.git
+        cd liquid-dsp
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+        cmake --build build --parallel
+        cmake --install build
 
     - name: Configure
       run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -321,7 +348,8 @@ jobs:
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
-      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main'
 
     steps:
     - name: Download all artifacts
@@ -345,7 +373,7 @@ jobs:
           zip -r "release/${DIR_NAME}.zip" "$DIR_NAME"
         fi
 
-        echo "=== Release assets ==="
+        echo "Release assets:"
         ls -lh release/
 
     - name: Update nightly release
@@ -400,7 +428,7 @@ jobs:
         | \`inspectrum-ng-${VERSION}-linux-Ubuntu-24.04-LTS-qt5.tar.gz\` | Ubuntu 24.04 LTS (Qt5) |
         | \`inspectrum-ng-${VERSION}-linux-Ubuntu-24.04-LTS-qt6.tar.gz\` | Ubuntu 24.04 LTS (Qt6) |
 
-        Install dependencies first: \`sudo apt install libfftw3-3 libliquid2d libqt5widgets5\` (Qt5) or \`libqt6widgets6\` (Qt6)
+        Install dependencies first: \`sudo apt install libfftw3-3 libqt5widgets5\` (Qt5) or \`libqt6widgets6\` (Qt6). liquid-dsp is statically linked (with runtime SIMD dispatch).
 
         ### macOS
         | File | Arch |
@@ -410,5 +438,109 @@ jobs:
         | \`inspectrum-ng-${VERSION}-macos-arm64-qt5.tar.gz\` | Apple Silicon ARM64 (Qt5) |
         | \`inspectrum-ng-${VERSION}-macos-arm64-qt6.tar.gz\` | Apple Silicon ARM64 (Qt6) |
 
-        Install dependencies first: \`brew install fftw liquid-dsp qt@6\`
+        Install dependencies first: \`brew install fftw qt@6\`. liquid-dsp is statically linked (with runtime SIMD dispatch).
         "
+
+  tagged-release:
+    needs: [extract-version, build, build-linux-distros]
+    runs-on: ubuntu-latest
+    if: |
+      !cancelled() &&
+      needs.build.result == 'success' &&
+      startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v8
+      with:
+        path: artifacts/
+
+    - name: Prepare release assets
+      run: |
+        VERSION=${{ needs.extract-version.outputs.version }}
+        TAG=${GITHUB_REF#refs/tags/}
+        mkdir -p release
+
+        # Copy all Linux and macOS tarballs
+        find artifacts/ -name '*.tar.gz' ! -name '*windows*' -exec cp {} release/ \;
+
+        # Convert Windows tarball to zip
+        WIN_TAR=$(find artifacts/ -name '*-windows-mingw64.tar.gz' | head -1)
+        if [ -n "$WIN_TAR" ]; then
+          tar xzf "$WIN_TAR"
+          DIR_NAME=$(tar tzf "$WIN_TAR" | head -1 | cut -d/ -f1)
+          zip -r "release/${DIR_NAME}.zip" "$DIR_NAME"
+        fi
+
+        # Source archive
+        git archive --format=zip --prefix="inspectrum-ng-${VERSION}-source/" \
+          -o "release/inspectrum-ng-${VERSION}-source.zip" HEAD
+
+        echo "Release assets:"
+        ls -lh release/
+
+    - name: Create tagged release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ needs.extract-version.outputs.version }}
+      run: |
+        TAG=${GITHUB_REF#refs/tags/}
+
+        # Determine if pre-release (rc, alpha, beta)
+        PRERELEASE=""
+        if echo "$TAG" | grep -qE '(rc|alpha|beta)'; then
+          PRERELEASE="--prerelease"
+        fi
+
+        NOTES=$(cat <<NOTES_EOF
+        ## inspectrum ng ${TAG}
+
+        See [feature.txt](https://github.com/${{ github.repository }}/blob/${TAG}/feature.txt) for full changelog.
+
+        ### Downloads
+
+        #### Windows
+        | File | Build |
+        |------|-------|
+        | \`inspectrum-ng-${VERSION}-windows-mingw64.zip\` | MinGW64, Qt5, liquid-dsp with runtime SIMD dispatch |
+
+        Self-contained zip with all DLLs included.
+
+        #### GNU/Linux
+        | File | Distro |
+        |------|--------|
+        | \`inspectrum-ng-${VERSION}-linux-Debian-12-Bookworm-qt5.tar.gz\` | Debian 12 (Qt5) |
+        | \`inspectrum-ng-${VERSION}-linux-Debian-12-Bookworm-qt6.tar.gz\` | Debian 12 (Qt6) |
+        | \`inspectrum-ng-${VERSION}-linux-Ubuntu-22.04-LTS-qt5.tar.gz\` | Ubuntu 22.04 LTS (Qt5) |
+        | \`inspectrum-ng-${VERSION}-linux-Ubuntu-22.04-LTS-qt6.tar.gz\` | Ubuntu 22.04 LTS (Qt6) |
+        | \`inspectrum-ng-${VERSION}-linux-Ubuntu-24.04-LTS-qt5.tar.gz\` | Ubuntu 24.04 LTS (Qt5) |
+        | \`inspectrum-ng-${VERSION}-linux-Ubuntu-24.04-LTS-qt6.tar.gz\` | Ubuntu 24.04 LTS (Qt6) |
+
+        Install dependencies: \`sudo apt install libfftw3-3 libqt5widgets5\` (Qt5) or \`libqt6widgets6\` (Qt6).
+        liquid-dsp is statically linked with runtime SIMD dispatch.
+
+        #### macOS
+        | File | Arch |
+        |------|------|
+        | \`inspectrum-ng-${VERSION}-macos-x86_64-qt5.tar.gz\` | Intel x86_64 (Qt5) |
+        | \`inspectrum-ng-${VERSION}-macos-x86_64-qt6.tar.gz\` | Intel x86_64 (Qt6) |
+        | \`inspectrum-ng-${VERSION}-macos-arm64-qt5.tar.gz\` | Apple Silicon ARM64 (Qt5) |
+        | \`inspectrum-ng-${VERSION}-macos-arm64-qt6.tar.gz\` | Apple Silicon ARM64 (Qt6) |
+
+        Install dependencies: \`brew install fftw qt@6\`.
+        liquid-dsp is statically linked with runtime SIMD dispatch.
+
+        #### Source
+        | File |
+        |------|
+        | \`inspectrum-ng-${VERSION}-source.zip\` |
+        NOTES_EOF
+        )
+
+        gh release create "$TAG" -R ${{ github.repository }} \
+          --title "inspectrum ng ${TAG}" \
+          --notes "$NOTES" \
+          $PRERELEASE \
+          release/*
