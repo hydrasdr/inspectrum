@@ -20,6 +20,8 @@
 
 #include <QApplication>
 #include <QDebug>
+#include <QtGlobal>
+#include <climits>
 #include "cursors.h"
 
 Cursors::Cursors(QObject * parent) : QObject::QObject(parent)
@@ -128,23 +130,27 @@ void Cursors::paintFront(QPainter &painter, QRect &rect, range_t<size_t>)
         painter.setPen(QPen(QColor(128, 128, 128, gridAlpha), 1,
                             useDash ? Qt::DashLine : Qt::SolidLine));
 
-        // Only draw lines visible within the viewport
+        // Only draw lines visible within the viewport.
+        // Use qint64 (always 64-bit) instead of long (which is 32-bit
+        // on Windows LLP64 and would silently truncate the products).
         int viewLeft = rect.left();
         int viewRight = rect.right();
-        long firstSeg = std::max(1L, (long)((long long)(viewLeft - minCursor->pos()) *
-                        segmentCount / cursorRect.width()));
-        long lastSeg = std::min((long)segmentCount,
-                       (long)((long long)(viewRight - minCursor->pos()) *
-                       segmentCount / cursorRect.width()) + 1);
+        qint64 firstSeg = std::max<qint64>(1,
+            (qint64)(viewLeft - minCursor->pos()) *
+            segmentCount / cursorRect.width());
+        qint64 lastSeg = std::min<qint64>((qint64)segmentCount,
+            (qint64)(viewRight - minCursor->pos()) *
+            segmentCount / cursorRect.width() + 1);
 
         // Batch all lines into a single drawLines call (much faster)
         int top = rect.top();
         int bot = rect.bottom();
         QVector<QLine> lines;
-        lines.reserve(lastSeg - firstSeg);
+        if (lastSeg > firstSeg)
+            lines.reserve((int)std::min<qint64>(lastSeg - firstSeg, INT_MAX));
         int lastPixel = INT_MIN;
-        for (long i = firstSeg; i < lastSeg; i++) {
-            int pos = minCursor->pos() + (int)((long long)i * cursorRect.width() / segmentCount);
+        for (qint64 i = firstSeg; i < lastSeg; i++) {
+            int pos = minCursor->pos() + (int)((qint64)i * cursorRect.width() / segmentCount);
             // Skip duplicate pixel positions (sub-pixel segments)
             if (pos == lastPixel) continue;
             lastPixel = pos;

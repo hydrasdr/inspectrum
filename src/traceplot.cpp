@@ -23,10 +23,17 @@
 #include <QPainterPath>
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <limits>
 #include "crashlog.h"
 #include "samplesource.h"
 #include "traceplot.h"
+
+/* C++11 specifies std::complex<T> has the layout of T[2] */
+static_assert(sizeof(std::complex<float>) == 2 * sizeof(float),
+    "std::complex<float> must be layout-compatible with float[2]");
+static_assert(alignof(std::complex<float>) == alignof(float[2]),
+    "std::complex<float> must be alignment-compatible with float[2]");
 
 TracePlot::TracePlot(std::shared_ptr<AbstractSampleSource> source) : Plot(source) {
     connect(this, &TracePlot::imageReady, this, &TracePlot::handleImage);
@@ -97,8 +104,8 @@ void TracePlot::drawTile(QString key, const QRect &rect, range_t<size_t> sampleR
     auto length = sampleRange.length();
 
     // Is it a 2-channel (complex) trace?
-    if (auto src = dynamic_cast<SampleSource<std::complex<float>>*>(sampleSource.get())) {
-        auto samples = src->getSamples(firstSample, length);
+    if (auto cplxSrc = dynamic_cast<SampleSource<std::complex<float>>*>(sampleSource.get())) {
+        auto samples = cplxSrc->getSamples(firstSample, length);
         if (samples == nullptr)
             return;
 
@@ -108,8 +115,8 @@ void TracePlot::drawTile(QString key, const QRect &rect, range_t<size_t> sampleR
         plotTrace(painter, rect, reinterpret_cast<float*>(samples.get())+1, length, 2);
 
     // Otherwise is it single channel?
-    } else if (auto src = dynamic_cast<SampleSource<float>*>(sampleSource.get())) {
-        auto samples = src->getSamples(firstSample, length);
+    } else if (auto floatSrc = dynamic_cast<SampleSource<float>*>(sampleSource.get())) {
+        auto samples = floatSrc->getSamples(firstSample, length);
         if (samples == nullptr)
             return;
 

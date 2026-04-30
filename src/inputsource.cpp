@@ -330,7 +330,11 @@ QJsonObject InputSource::readMetaData(const QString &filename)
 
                 const size_t rel_sample_start = sample_start - offset;
 
-                const size_t sample_count = sigmf_annotation["core:sample_count"].toDouble();
+                const double sample_count_d = sigmf_annotation["core:sample_count"].toDouble();
+                if (sample_count_d <= 0.0)
+                    continue;
+                const size_t sample_count = (size_t)sample_count_d;
+                /* half-open semantics: [start, start + count) */
                 auto sampleRange = range_t<size_t>{rel_sample_start, rel_sample_start + sample_count - 1};
 
                 const double freq_lower_edge = sigmf_annotation["core:freq_lower_edge"].toDouble();
@@ -570,6 +574,26 @@ void InputSource::openFile(const char *filename)
     } catch (...) {
         file->unmap(data);
         throw;
+    }
+
+    /*
+     * Verify (data + dataOffset) alignment matches the adapter's
+     * sample type. mmap'd files are page-aligned, but with a non-zero
+     * dataOffset (e.g., WAV header) the resulting pointer can be
+     * misaligned for complex<float> / int32_t reads. Misaligned typed
+     * access is UB on strict-alignment archs (ARM/SPARC) and a
+     * strict-aliasing violation everywhere. Refuse the file in that
+     * case rather than crash silently downstream.
+     */
+    if (sampleAdapter) {
+        const size_t sampleAlign = sampleAdapter->sampleSize();
+        if (sampleAlign > 1 &&
+            (reinterpret_cast<uintptr_t>(data + dataOffset) % sampleAlign) != 0) {
+            file->unmap(data);
+            throw std::runtime_error(
+                "File data offset is not aligned to sample size; "
+                "cannot mmap-access. Convert the file or remove the header.");
+        }
     }
 
     cleanup();

@@ -17,6 +17,12 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* fopen() is intentional: the crash log is a local file and we need
+ * portable POSIX semantics, not MSVC's fopen_s. Silence C4996 here. */
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+
 #include "crashlog.h"
 
 #include <cstdarg>

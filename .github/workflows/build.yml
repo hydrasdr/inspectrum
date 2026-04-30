@@ -393,7 +393,8 @@ jobs:
           --target ${{ github.sha }} \
           --title "Nightly Build (v${VERSION})" \
           --notes "Uploading assets..." \
-          --prerelease
+          --prerelease \
+          --draft=false
 
         echo "Uploading release assets..."
         gh release upload nightly release/* -R ${{ github.repository }} --clobber

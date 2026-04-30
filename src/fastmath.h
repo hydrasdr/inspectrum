@@ -14,6 +14,12 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
+
+static_assert(std::numeric_limits<float>::is_iec559,
+	"fastmath.h requires IEEE 754 binary32 floats");
+static_assert(sizeof(float) == sizeof(int32_t),
+	"fastmath.h requires sizeof(float) == sizeof(int32_t)");
 
 /*
  * Fast IEEE 754 approximations for log2 and exp2.
@@ -24,6 +30,10 @@
  * Max error: log2 ~0.086 log2 units (~0.26 dB), exp2 <7% relative.
  * A 256-color spectrogram over 100 dB has ~0.39 dB per step,
  * so the error is sub-pixel and visually identical to standard math.
+ *
+ * Preconditions:
+ *   fast_log2f_approx: x > 0  (use linearTodB() for clamped variant)
+ *   fast_exp2f_approx: |x| < 126 (clamped internally)
  */
 static inline float fast_log2f_approx(float x)
 {
@@ -34,6 +44,11 @@ static inline float fast_log2f_approx(float x)
 
 static inline float fast_exp2f_approx(float x)
 {
+	/* clamp to keep (x * 2^23) within int32_t range with margin;
+	 * +/- 126 is enough to cover normal floats and avoids UB on
+	 * the float-to-int conversion for any caller-supplied value */
+	if (x >  126.0f) x =  126.0f;
+	if (x < -126.0f) x = -126.0f;
 	int32_t i = (int32_t)(x * 8388608.0f) + 0x3F800000; /* x*(1<<23) + 127*(1<<23) */
 	float r;
 	memcpy(&r, &i, sizeof(r));

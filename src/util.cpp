@@ -19,7 +19,9 @@
  */
 
 #include "util.h"
-#include <clocale>
+#include <cstdlib>
+#include <locale>
+#include <sstream>
 
 std::string formatSIValue(float value)
 {
@@ -35,11 +37,11 @@ std::string formatSIValue(float value)
 
     int power = 0;
     while (value < 1.0f && power > -9) {
-        value *= 1e3;
+        value *= 1e3f;
         power -= 3;
     }
-    while (value >= 1e3 && power < 9) {
-        value *= 1e-3;
+    while (value >= 1e3f && power < 9) {
+        value *= 1e-3f;
         power += 3;
     }
     std::stringstream ss;
@@ -49,11 +51,19 @@ std::string formatSIValue(float value)
 
 std::string formatSIValueSigned(double value, const char *unit)
 {
+    /* Sorted descending: first row whose threshold <= |value| wins.
+     * Sub-1 prefixes (m/u/n) are required for time displays in the
+     * us..ms range; without them values < 1e-3 collapse to "0.000"
+     * via the %.3f branch below. */
     static const struct { double threshold; double divisor; const char *suffix; } table[] = {
-        { 1e9,  1e9,  "G" },
-        { 1e6,  1e6,  "M" },
-        { 1e3,  1e3,  "k" },
-        { 0,    1.0,  ""  },
+        { 1e9,   1e9,   "G" },
+        { 1e6,   1e6,   "M" },
+        { 1e3,   1e3,   "k" },
+        { 1.0,   1.0,   ""  },
+        { 1e-3,  1e-3,  "m" },
+        { 1e-6,  1e-6,  "u" },
+        { 1e-9,  1e-9,  "n" },
+        { 0,     1e-12, "p" },
     };
 
     if (value == 0.0) {
@@ -94,23 +104,27 @@ bool parseSIValue(const std::string &str, double &result)
     if (str.empty())
         return false;
 
-    char *prev = setlocale(LC_NUMERIC, nullptr);
-    std::string savedLocale(prev ? prev : "");
-    setlocale(LC_NUMERIC, "C");
+    /*
+     * Parse via std::istringstream with the classic ("C") locale
+     * imbued so the decimal separator is always '.'. This is
+     * thread-safe, unlike setlocale() which is process-global.
+     */
+    std::istringstream iss(str);
+    iss.imbue(std::locale::classic());
 
-    char *end = nullptr;
-    double val = strtod(str.c_str(), &end);
-
-    if (!savedLocale.empty())
-        setlocale(LC_NUMERIC, savedLocale.c_str());
-
-    if (end == str.c_str())
+    double val;
+    iss >> val;
+    if (iss.fail())
         return false;
 
-    while (*end == ' ')
-        end++;
+    /* skip whitespace, then check optional unit prefix */
+    char c = '\0';
+    while (iss.get(c)) {
+        if (c != ' ' && c != '\t')
+            break;
+    }
 
-    switch (*end) {
+    switch (c) {
     case 'G': case 'g': val *= 1e9;  break;
     case 'M':           val *= 1e6;  break;
     case 'K': case 'k': val *= 1e3;  break;

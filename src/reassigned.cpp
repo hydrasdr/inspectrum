@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -158,10 +159,13 @@ void computeReassignedTile(TFRMode mode,
 					    thWin.data(), bufTh.get());
 
 		float colF = (float)col;
+		/* floor below which division would produce inf and
+		 * subsequent lrintf would be UB on inf/nan inputs */
+		const float minPow = std::numeric_limits<float>::min();
 		for (int k = 0; k < fftSize; k++) {
 			float rawPow = rH[k].real() * rH[k].real() +
 				       rH[k].imag() * rH[k].imag();
-			if (rawPow < rawThresh)
+			if (rawPow < rawThresh || rawPow <= minPow)
 				continue;
 
 			std::complex<float> conjH = std::conj(rH[k]);

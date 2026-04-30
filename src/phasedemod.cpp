@@ -19,6 +19,9 @@
 
 #include "phasedemod.h"
 
+/* 1/pi as double constant, avoiding non-standard M_PI macro */
+static constexpr double INV_PI = 0.31830988618379067153776752674503;
+
 PhaseDemod::PhaseDemod(std::shared_ptr<SampleSource<std::complex<float>>> src) : SampleBuffer(src)
 {
 
@@ -29,6 +32,6 @@ void PhaseDemod::work(void *input, void *output, int count, size_t)
     auto in = static_cast<std::complex<float>*>(input);
     auto out = static_cast<float*>(output);
     for (int i = 0; i < count; i++) {
-        out[i] = std::arg(in[i]) * (1 / M_PI);
+        out[i] = std::arg(in[i]) * (float)INV_PI;
     }
 }

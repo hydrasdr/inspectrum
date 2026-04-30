@@ -53,16 +53,18 @@ SpectrogramControls::SpectrogramControls(const QString & title, QWidget * parent
     layout->addRow(openLayout);
 
     sampleRate = new QLineEdit();
-    auto double_validator = new QDoubleValidator(this);
-    double_validator->setBottom(0.0);
-    sampleRate->setValidator(double_validator);
+    /* No QDoubleValidator: parseSIValue() accepts SI prefixes
+     * (k/M/G/m/u/n) and optional unit text (e.g. "10MHz"), and a
+     * numeric-only validator rejects those characters at keystroke
+     * time. parseSIValue itself rejects malformed input. */
     layout->addRow(new QLabel(tr("Sample rate:")), sampleRate);
 
     // View position & bookmarks
     layout->addRow(new QLabel(tr("<b>View</b>")));
 
     viewPosXEdit = new QLineEdit("0");
-    viewPosXEdit->setValidator(new QDoubleValidator(0, 1e9, 6, this));
+    /* No QDoubleValidator: parseSIValue() accepts SI prefixes
+     * (e.g. "1.5m" for 1.5 ms, "100u" for 100 us). */
     layout->addRow(new QLabel(tr("Pos X (s):")), viewPosXEdit);
 
     viewPosYEdit = new QLineEdit("0");
@@ -98,9 +100,8 @@ SpectrogramControls::SpectrogramControls(const QString & title, QWidget * parent
         viewPosXEdit->clearFocus();
     });
     connect(viewPosXEdit, &QLineEdit::editingFinished, this, [this]() {
-        bool ok;
-        double t = viewPosXEdit->text().toDouble(&ok);
-        if (ok && t >= 0)
+        double t;
+        if (parseSIValue(viewPosXEdit->text().toStdString(), t) && t >= 0)
             emit viewPosXEdited(t);
     });
     connect(viewPosYEdit, &QLineEdit::returnPressed, this, [this]() {
@@ -397,15 +398,13 @@ SpectrogramControls::SpectrogramControls(const QString & title, QWidget * parent
     });
 
     offsetEdit = new QLineEdit();
-    auto offsetValidator = new QDoubleValidator(this);
-    offsetValidator->setBottom(0.0);
-    offsetEdit->setValidator(offsetValidator);
+    /* No QDoubleValidator: parseSIValue() accepts SI prefixes
+     * (e.g. "1.5m" for 1.5 ms, "100u" for 100 us). */
     layout->addRow(new QLabel(tr("Offset (s):")), offsetEdit);
 
     periodEdit = new QLineEdit();
-    auto periodValidator = new QDoubleValidator(this);
-    periodValidator->setBottom(0.0);
-    periodEdit->setValidator(periodValidator);
+    /* No QDoubleValidator: parseSIValue() accepts SI prefixes
+     * (e.g. "1.5m" for 1.5 ms, "100u" for 100 us). */
     layout->addRow(new QLabel(tr("Period (s):")), periodEdit);
 
     cursorSymbolsSpinBox = new QSpinBox();
@@ -476,18 +475,16 @@ SpectrogramControls::SpectrogramControls(const QString & title, QWidget * parent
         periodEdit->clearFocus();
     });
     connect(periodEdit, &QLineEdit::editingFinished, this, [this]() {
-        bool ok;
-        double period = periodEdit->text().toDouble(&ok);
-        if (ok && period > 0)
+        double period;
+        if (parseSIValue(periodEdit->text().toStdString(), period) && period > 0)
             emit periodChanged(period);
     });
     connect(offsetEdit, &QLineEdit::returnPressed, this, [this]() {
         offsetEdit->clearFocus();
     });
     connect(offsetEdit, &QLineEdit::editingFinished, this, [this]() {
-        bool ok;
-        double offset = offsetEdit->text().toDouble(&ok);
-        if (ok && offset >= 0)
+        double offset;
+        if (parseSIValue(offsetEdit->text().toStdString(), offset) && offset >= 0)
             emit offsetChanged(offset);
     });
     connect(tunerCentreEdit, &QLineEdit::returnPressed, this, [this]() {

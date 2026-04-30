@@ -27,6 +27,8 @@
 #include <QRect>
 #include <liquid/liquid.h>
 #include <algorithm>
+#include <cinttypes>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -168,11 +170,14 @@ void SpectrogramPlot::paintFront(QPainter &painter, QRect &rect, range_t<size_t>
 
 void SpectrogramPlot::paintFrequencyScale(QPainter &painter, QRect &rect)
 {
-    if (sampleRate == 0) {
+    if (sampleRate <= 0.0) {
         return;
     }
 
-    if (sampleRate / 2 > UINT64_MAX) {
+    /* reject ridiculous sample rates that would overflow uint64_t
+     * arithmetic below (the 2^63 bound has exact double representation,
+     * unlike UINT64_MAX which rounds up to 2^64) */
+    if (sampleRate >= 9.223372036854776e18) {
         return;
     }
 
@@ -231,13 +236,13 @@ void SpectrogramPlot::paintFrequencyScale(QPainter &painter, QRect &rect)
             char buf[128];
 
             if (bwPerTick % 1000000000 == 0)
-                snprintf(buf, sizeof(buf), "-%llu GHz", (unsigned long long)(tick / 1000000000));
+                snprintf(buf, sizeof(buf), "-%" PRIu64 " GHz", (uint64_t)(tick / 1000000000));
             else if (bwPerTick % 1000000 == 0)
-                snprintf(buf, sizeof(buf), "-%llu MHz", (unsigned long long)(tick / 1000000));
+                snprintf(buf, sizeof(buf), "-%" PRIu64 " MHz", (uint64_t)(tick / 1000000));
             else if (bwPerTick % 1000 == 0)
-                snprintf(buf, sizeof(buf), "-%llu kHz", (unsigned long long)(tick / 1000));
+                snprintf(buf, sizeof(buf), "-%" PRIu64 " kHz", (uint64_t)(tick / 1000));
             else
-                snprintf(buf, sizeof(buf), "-%llu Hz", (unsigned long long)tick);
+                snprintf(buf, sizeof(buf), "-%" PRIu64 " Hz", (uint64_t)tick);
 
             if (!inputSource->realSignal() && nyVis)
                 painter.drawText(5, tickny - 5, buf);
@@ -306,10 +311,17 @@ void SpectrogramPlot::paintAnnotations(QPainter &painter, QRect &rect, range_t<s
         if(start <= sampleRange.maximum && end >= sampleRange.minimum) {
 
             double frequency = a.frequencyRange.maximum - inputSource->getFrequency();
-            int x = (a.sampleRange.minimum - sampleRange.minimum) / getStride();
+            /* signed delta avoids size_t underflow when the annotation
+             * starts before the visible range (then x is negative, which
+             * is fine for QPainter clipping) */
+            ptrdiff_t startDelta = (ptrdiff_t)a.sampleRange.minimum
+                                 - (ptrdiff_t)sampleRange.minimum;
+            int stride = getStride();
+            if (stride <= 0) stride = 1;
+            int x = (int)(startDelta / stride);
             int y = zero - frequency / sampleRate * rect.height();
             int height = (a.frequencyRange.maximum - a.frequencyRange.minimum) / sampleRate * rect.height();
-            int width = (a.sampleRange.maximum - a.sampleRange.minimum) / getStride();
+            int width = (int)((a.sampleRange.maximum - a.sampleRange.minimum) / (size_t)stride);
 
             // Draw the label 2 pixels above the box
             painter.drawText(x, y - 2, a.label);
@@ -350,7 +362,8 @@ void SpectrogramPlot::paintMid(QPainter &painter, QRect &rect, range_t<size_t> s
 
     size_t sampleOffset = sampleRange.minimum % ((size_t)stride * lpt);
     size_t tileID = sampleRange.minimum - sampleOffset;
-    int xoffset = sampleOffset / stride;
+    /* xoffset fits in int: bounded by lpt (tile size in columns) */
+    int xoffset = (int)(sampleOffset / stride);
 
     /*
      * Compute the vertical crop.
@@ -791,8 +804,10 @@ void SpectrogramPlot::updateHeight()
 
 void SpectrogramPlot::updatePowerRange()
 {
-    int delta = std::abs(int(powerMin - powerMax));
-    powerRange = (delta > 0) ? -1.0f / delta : -1.0f;
+    /* compute in 64-bit then take abs to avoid std::abs(INT_MIN) UB */
+    int64_t d64 = (int64_t)powerMin - (int64_t)powerMax;
+    if (d64 < 0) d64 = -d64;
+    powerRange = (d64 > 0) ? -1.0f / (float)d64 : -1.0f;
 }
 
 void SpectrogramPlot::clearAllCaches()

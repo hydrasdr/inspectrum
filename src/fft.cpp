@@ -63,6 +63,7 @@ void FFT::saveWisdom()
 
 bool FFT::needsPreWarm()
 {
+	std::lock_guard<std::mutex> lock(cacheMutex);
 	for (int exp = 2; exp <= 17; exp++) {
 		if (!planCache.count(1 << exp))
 			return true;
@@ -84,8 +85,11 @@ void FFT::preWarm(std::function<void(int, int)> progress)
 			progress(step, total);
 		step++;
 
-		if (planCache.count(size))
-			continue;
+		{
+			std::lock_guard<std::mutex> lock(cacheMutex);
+			if (planCache.count(size))
+				continue;
+		}
 
 		fftwf_complex *tmp = (fftwf_complex *)fftwf_malloc(
 			sizeof(fftwf_complex) * size);
@@ -95,6 +99,7 @@ void FFT::preWarm(std::function<void(int, int)> progress)
 		fftwf_plan p = fftwf_plan_dft_1d(size, tmp, tmp,
 			FFTW_FORWARD, FFTW_MEASURE);
 		if (p) {
+			std::lock_guard<std::mutex> lock(cacheMutex);
 			planCache[size] = p;
 			wisdomDirty = true;
 		}

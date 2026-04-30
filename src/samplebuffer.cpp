@@ -53,7 +53,10 @@ std::unique_ptr<Tout[]> SampleBuffer<Tin, Tout>::getSamples(size_t start, size_t
         tempBufSize = needed;
     }
 
-    work(samples.get(), tempBuf.get(), history + length, start);
+    /* work() takes int count -- history+length fits in int because
+     * the demod chain processes at most a tile's worth of samples
+     * (lpt * fftSize, both well below INT_MAX) */
+    work(samples.get(), tempBuf.get(), (int)(history + length), start);
     memcpy(dest.get(), tempBuf.get() + history, length * sizeof(Tout));
     return dest;
 }

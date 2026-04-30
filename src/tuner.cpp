@@ -121,9 +121,9 @@ void Tuner::setDeviation(int dev)
     updateCursors();
 }
 
-void Tuner::setHeight(int height)
+void Tuner::setHeight(int newHeight)
 {
-    this->height = height;
+    this->height = newHeight;
 }
 
 void Tuner::updateCursors()

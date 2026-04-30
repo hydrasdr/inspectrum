@@ -34,6 +34,8 @@ endif (MINGW)
 
 # This only works in cmake >3.1
 set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND inspectrum_sources
     abstractsamplesource.cpp
@@ -74,12 +76,25 @@ endif()
 find_package(FFTW REQUIRED)
 find_package(Liquid REQUIRED)
 
-include_directories(
+# Mark third-party headers as SYSTEM so their warnings don't pollute
+# our /W4 / -Wall output (e.g., liquid.h C4003 macro warnings).
+include_directories(SYSTEM
     ${FFTW_INCLUDES}
     ${LIQUID_INCLUDES}
 )
 
 add_executable(inspectrum ${EXE_ARGS} ${inspectrum_sources})
+
+# Enable common warnings on all compilers (private to inspectrum,
+# does not propagate to consumers of the binary). /permissive- is
+# intentionally not used: it rejects MSVC extensions still relied on
+# by third-party headers (Qt, liquid-dsp).
+if (MSVC)
+    target_compile_options(inspectrum PRIVATE /W4)
+else()
+    target_compile_options(inspectrum PRIVATE
+        -Wall -Wextra -Wno-unused-parameter)
+endif()
 
 if (Qt6_FOUND)
     set(QT_LIBS Qt6::Core Qt6::Widgets Qt6::Concurrent)
@@ -134,8 +149,13 @@ endif()
 if(EXISTS ${PROJECT_SOURCE_DIR}/tests/test_crashlog.cpp)
     add_executable(test_crashlog EXCLUDE_FROM_ALL
         ${PROJECT_SOURCE_DIR}/tests/test_crashlog.cpp crashlog.cpp)
-    target_include_directories(test_crashlog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(test_crashlog ${QT_LIBS})
+    target_include_directories(test_crashlog PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${LIQUID_INCLUDES})
+    # crashlog.cpp calls liquid_simd_get_level() / _str() when the
+    # bvernoux liquid-dsp fork is in the include path (the header
+    # defines __LIQUID_CPUID_H__). Link liquid so the symbols resolve.
+    target_link_libraries(test_crashlog ${QT_LIBS} ${LIQUID_LIBRARIES})
     if (WIN32)
         target_link_libraries(test_crashlog dbghelp)
     endif()
@@ -201,7 +221,9 @@ if (WIN32)
         endforeach()
     endif()
 
-    # Copy Qt platform plugin
+    # Copy Qt platform plugin (only when present: static Qt builds
+    # have no plugin DLLs to copy and the post-build step would fail
+    # and abort sibling target builds)
     if (Qt6_FOUND)
         get_target_property(_qt_core_loc Qt6::Core LOCATION)
         get_filename_component(_qt_bin_dir "${_qt_core_loc}" DIRECTORY)
@@ -211,41 +233,64 @@ if (WIN32)
         get_filename_component(_qt_bin_dir "${_qt_core_loc}" DIRECTORY)
         set(QT_PLUGIN_DIR "${_qt_bin_dir}/../share/qt5/plugins")
     endif()
-    add_custom_command(TARGET inspectrum POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:inspectrum>/platforms"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT_PLUGIN_DIR}/platforms/qwindows.dll"
-            "$<TARGET_FILE_DIR:inspectrum>/platforms/"
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:inspectrum>/styles"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT_PLUGIN_DIR}/styles/qwindowsvistastyle.dll"
-            "$<TARGET_FILE_DIR:inspectrum>/styles/"
-    )
+    if (EXISTS "${QT_PLUGIN_DIR}/platforms/qwindows.dll")
+        add_custom_command(TARGET inspectrum POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:inspectrum>/platforms"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${QT_PLUGIN_DIR}/platforms/qwindows.dll"
+                "$<TARGET_FILE_DIR:inspectrum>/platforms/"
+        )
+    endif()
+    if (EXISTS "${QT_PLUGIN_DIR}/styles/qwindowsvistastyle.dll")
+        add_custom_command(TARGET inspectrum POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:inspectrum>/styles"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${QT_PLUGIN_DIR}/styles/qwindowsvistastyle.dll"
+                "$<TARGET_FILE_DIR:inspectrum>/styles/"
+        )
+    endif()
 
-    # Copy FFTW DLL if using shared library
-    if (FFTW_LIBRARIES MATCHES "dll")
-        get_filename_component(FFTW_LIB_DIR "${FFTW_LIBRARIES}" DIRECTORY)
-        find_file(FFTW_DLL NAMES libfftw3f-3.dll HINTS "${FFTW_LIB_DIR}/../bin")
-        if (FFTW_DLL)
-            add_custom_command(TARGET inspectrum POST_BUILD
+    # Copy FFTW DLL when linking against an import library for a shared
+    # FFTW. Search both vcpkg (fftw3f.dll in ../bin) and MSYS2/MinGW
+    # (libfftw3f-3.dll in ../bin or same dir) layouts. If FFTW is fully
+    # static neither name resolves and no copy is performed.
+    get_filename_component(FFTW_LIB_DIR "${FFTW_LIBRARIES}" DIRECTORY)
+    find_file(FFTW_DLL
+        NAMES fftw3f.dll libfftw3f-3.dll libfftw3f.dll
+        HINTS "${FFTW_LIB_DIR}/../bin" "${FFTW_LIB_DIR}")
+    if (FFTW_DLL)
+        add_custom_command(TARGET inspectrum POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FFTW_DLL}"
+                $<TARGET_FILE_DIR:inspectrum>
+        )
+        if (TARGET inspectrum_bench)
+            add_custom_command(TARGET inspectrum_bench POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${FFTW_DLL}"
-                    $<TARGET_FILE_DIR:inspectrum>
+                    $<TARGET_FILE_DIR:inspectrum_bench>
             )
         endif()
     endif()
 
     # Copy liquid-dsp DLL if using shared library
-    if (LIQUID_LIBRARIES MATCHES "dll")
-        get_filename_component(LIQUID_LIB_DIR "${LIQUID_LIBRARIES}" DIRECTORY)
-        find_file(LIQUID_DLL NAMES libliquid.dll HINTS "${LIQUID_LIB_DIR}/../bin" "${LIQUID_LIB_DIR}")
-        if (LIQUID_DLL)
-            add_custom_command(TARGET inspectrum POST_BUILD
+    get_filename_component(LIQUID_LIB_DIR "${LIQUID_LIBRARIES}" DIRECTORY)
+    find_file(LIQUID_DLL
+        NAMES libliquid.dll liquid.dll
+        HINTS "${LIQUID_LIB_DIR}/../bin" "${LIQUID_LIB_DIR}")
+    if (LIQUID_DLL)
+        add_custom_command(TARGET inspectrum POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${LIQUID_DLL}"
+                $<TARGET_FILE_DIR:inspectrum>
+        )
+        if (TARGET inspectrum_bench)
+            add_custom_command(TARGET inspectrum_bench POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${LIQUID_DLL}"
-                    $<TARGET_FILE_DIR:inspectrum>
+                    $<TARGET_FILE_DIR:inspectrum_bench>
             )
         endif()
     endif()

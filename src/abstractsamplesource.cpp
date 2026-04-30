@@ -33,7 +33,9 @@ void AbstractSampleSource::invalidate()
 
 int AbstractSampleSource::subscriberCount()
 {
-    return subscribers.size();
+    /* explicit cast: subscriber count is bounded by the number of
+     * plot/UI consumers (single-digit), int is more than enough */
+    return (int)subscribers.size();
 }
 
 void AbstractSampleSource::unsubscribe(Subscriber *subscriber)

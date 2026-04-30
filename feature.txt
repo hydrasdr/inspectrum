@@ -1,221 +1,207 @@
-inspectrum ng v0.5.3-rc2
+inspectrum ng v0.5.4-rc0
 ========================
 
-Major update forked from inspectrum v0.4.0.
+Forked from inspectrum v0.4.0.
 
-Features (v0.5.0)
-------------------
- 1. ThresholdPlot: bin/hex/ascii overlay on threshold waveform, export to clipboard
- 2. Editable symbol rate (with SI suffix support), period, offset
- 3. Auto detect symbol rate (ASK/OOK) via Schmitt trigger + run-length analysis
- 4. Session save/load (.isession v0.5.0 JSON format)
- 5. Drag & drop file loading
- 6. Spectrogram Y zoom (frequency crop centered on tuner)
- 7. FFT zero-padding (extends FFT size beyond window size)
- 8. Crop to tuner (physical height change, drag offset locking)
- 9. Tuner panel: editable centre/bandwidth with SI, visibility toggle
-10. Export tuner-filtered with rational resampler (liquid-dsp msresamp_crcf)
-11. Export spectrogram to PNG (current view with top+bottom time scales)
-12. Cursor grid opacity slider
-13. Symbol count clamping to file bounds
-14. Cursor state preservation on disable/re-enable
-15. Auto-enable cursors on file load
-16. Tuner default center position
-17. View position (Pos X/Y editable, bookmarks with add/update/remove)
-18. Bookmarks saved in .isession, loadable from .json
-19. SI unit display and input for Hz/Bd fields
-20. Bottom time scale (on screen and PNG export)
-21. View position preserved across FFT/zoom/zero-pad changes
-22. Bit order toggle (LSB first)
 
-New features (v0.5.1): Advanced Spectrogram & Signal Analysis
---------------------------------------------------------------
-23. FFT overlap control (0%, 25%, 50%, 75%, 87.5%)
-    - Configurable hop size for smoother chirp/swept signal display
-    - 4x more FFT columns at 75% overlap, 8x at 87.5%
-24. Window function selector (6 types)
-    - Hann, Hamming, Blackman-Harris (-92 dB sidelobes),
-      Kaiser (adjustable beta 0-30), Flat-top (amplitude accuracy),
-      Rectangular
-25. Extended zero-padding (1x to 64x)
-    - Smooth frequency interpolation for narrow spectral features
-26. Averaging modes (5 modes)
-    - Off, Linear (box filter), Exponential (adjustable alpha decay),
-      Max hold (peak envelope), Min hold (noise floor mapping)
-    - Max/Min hold use O(n) monotonic deque algorithm
-27. Noise floor estimation & subtraction
-    - Subtract (median), Subtract (percentile), Normalize
-    - Per-frequency-bin estimation, flattens noise for weak signals
-28. Colormap selection (6 colormaps)
-    - Default, Viridis, Inferno, Turbo, Magma, Grayscale
-    - Perceptually uniform options for better dynamic range visibility
-29. Cursor lock (prevent accidental dragging while scrolling)
-30. Grid opacity controls all cursor elements (fill, grid, edges)
-    - Opacity 0 = fully transparent (nothing drawn)
-31. Zoom Y works in crop-to-tuner mode (up to 32x)
-32. Scrollable controls dock (vertical scroll for many controls)
-33. Controls dock sized to fit at launch (user can shrink freely)
-34. Window starts at 50% screen width, 80% height, centered
-35. WAV file support (RIFF/WAV header parsing, IQ 2-channel,
-    PCM 8/16/24/32-bit and IEEE float, SDR++ compatible)
+v0.5.4-rc0
+----------
+UI fixes:
+- Sample rate / Pos X / Offset / Period: drop QDoubleValidator that
+  blocked SI suffix keystrokes (k, M, G, m, u, n). All physical-unit
+  fields now parse via parseSIValue uniformly (e.g. "10MHz", "125u").
+- formatSIValueSigned: add m/u/n/p prefixes so sub-1 values keep
+  precision. Symbol period read-out previously collapsed to "0.000s"
+  for typical us..ms periods; now displays "125.0us" etc.
 
-New features (v0.5.2): Reassigned Spectrogram & Quality
----------------------------------------------------------
-36. Reassigned spectrogram
-    - 3 FFTs per column (h, t*h, h') with energy redistribution
-      to local time-frequency centroids (Auger & Flandrin 1995)
-    - Pure tone: typically much sharper than standard STFT
-    - Chirp signals: improved energy concentration
-    - Configurable energy threshold (1-120 dB below peak)
-    - Based on Auger & Flandrin 1995 (IEEE TSP)
-37. Synchrosqueezed spectrogram
-    - 2 FFTs per column (h, h'), frequency-only reassignment
-    - Preserves time grid (invertible transform)
-    - Same frequency sharpening as reassigned, 33% cheaper
-38. TracePlot min/max decimation
-    - Fixes missing vertical segments at all zoom levels
-    - For each pixel column: draws min-to-max vertical line
-    - Preserves OOK edges, FSK steps, fast transitions
-    - Original code drew 1 sample per pixel (lost peaks when zoomed out)
 
-New files (v0.5.3)
-------------------
-- crashlog.h/cpp         - lightweight crash & diagnostic logger with
-                           platform-specific handlers (SEH/signals),
-                           stack trace capture, OS/compiler/Qt info
-
-New files (v0.5.2)
-------------------
-- reassigned.h/cpp       - reassigned & synchrosqueezed TFR engine
-
-New files (v0.5.1)
-------------------
-- windowfunctions.h/cpp  - 6 window types with precomputed coefficients
-- colormaps.h/cpp        - 6 colormap LUT generators (256-entry RGBA)
-- noisefloor.h/cpp       - per-bin noise floor estimation & subtraction
-- averaging.h/cpp        - 5 averaging modes with monotonic deque optimization
-
-UI improvements (v0.5.1+)
--------------------------
-- TFR mode combo (Standard / Reassigned / Synchrosqueezed)
-- Reassign threshold spin (visible only for non-Standard modes)
-- Avg mode combo shows/hides relevant sub-controls (slider, alpha spin)
-- Kaiser beta spin visible only when Kaiser window selected
-- Noise percentile spin visible only when percentile mode selected
-- In-app note explaining derived plot independence from FFT settings
-- All new settings persisted in QSettings and .isession files
-- TFR mode always starts at Standard (experimental, not persisted in QSettings)
-
-Display: dynamic slider labels, render time stats (min/avg/max),
-native platform style (windowsvista/Fusion), SI formatted values,
-controls rearranged by workflow.
-
-Performance
------------
-- FFTW plan cache (FFTW_MEASURE + wisdom persistence + pre-warm at startup)
-- Deferred tuner/zoom updates, ThresholdPlot bit cache, debounced QSettings writes
-- Pre-allocated reusable buffers (FFT tile, sample, linear, liquid-dsp objects)
-- Adaptive tile size (~512KB/tile), 128MB caches, FNV-1a hash keys
-- Precomputed constants, FFT normalization by windowSize, partial read zero-fill
-- Fast IEEE754 log2f/exp2f approximations (bit-trick, sub-pixel dB accuracy)
-- Zero-copy FFT API, zero-alloc sample reads, std::fill zero-pad
-- Cache-friendly loop order for colormap (4-7x faster) and averaging
-- Cursor grid: viewport culling, sub-pixel dedup, batched solid lines
-- Correct dB scale (true dBFS, roundtrip-correct dB/linear averaging)
-- TracePlot min/max decimation (preserves fast transitions at all zoom levels)
-- Monotonic deque for O(n) sliding window max/min hold averaging
-- Transpose-process-transpose for cache-friendly max/min hold on column-major data
-- Window functions computed once per config change (zero runtime cost)
-- Colormaps generated once (256-entry LUT, zero runtime cost)
-- Noise floor cached per tile, recomputed only on parameter change
-- Three-level tile cache: fftCache -> enhancedCache -> pixmapCache
-- QPixmapCache properly invalidated on stride-changing settings
-- TileCacheKey includes overlap index for correct cache isolation
-- Reassigned: ~2.5x cost of standard STFT (3 FFTs), synchrosqueezed: ~1.8x (2 FFTs)
-- Memory-mapped file I/O: 100GB+ files use ~500MB RAM regardless of size
-
-Bug fixes (v0.5.3): Crash fix & stability
---------------------------------------------
-- Fix crash (SIGILL) when adding derived plot on various CPU generations
-  rc1: CPUs without AVX-512 crashed (reported by Norbert DL8LAQ, issue #1)
-  rc2: CPUs with AVX but without AVX2 also crashed
-  Root cause: liquid-dsp dotprod compiled for a single SIMD level at build
-  time, or AVX variant compiled with AVX2+FMA flags.
-  Fix: liquid-dsp fork (bvernoux/liquid-dsp) now has runtime SIMD dispatch.
+v0.5.3
+------
+Bug fixes:
+- Fix crash (SIGILL) when adding derived plot on various CPUs.
+  rc1: CPUs without AVX-512 crashed (reported by Norbert DL8LAQ, issue #1).
+  rc2: CPUs with AVX but without AVX2 also crashed.
+  Root cause: liquid-dsp dotprod compiled for a single SIMD level, or
+  AVX variant compiled with AVX2+FMA flags.
+  Fix: liquid-dsp fork (bvernoux/liquid-dsp) with runtime SIMD dispatch.
   All variants (portable/SSE4.2/AVX2+FMA/AVX-512) compiled, best selected
   via CPUID at startup. AVX-only CPUs use SSE4.2 fallback.
 - Hardened thread safety and shutdown (TunerTransform QMutex, PlotView
   destructor waits for worker threads, addPlot null guard, TracePlot
-  worker exception guard)
-- New crash diagnostic logger (inspectrum_crash.log next to executable)
+  worker exception guard).
+- New crash diagnostic logger (inspectrum_crash.log next to executable).
   Logs OS/compiler/Qt info, timestamped entries, and on crash: exception
-  code, address, stack trace (Windows dbghelp / POSIX signals).
-  Logs clean exit confirmation after all cleanup completes.
+  code, address, stack trace (Windows dbghelp / POSIX signals). Logs
+  clean exit confirmation.
 
-Performance (v0.5.3)
---------------------
-- TunerTransform::work() mutex narrowed: lock only held for parameter
-  snapshot (~1us), released before FIR filter computation (~50-200us).
-  Eliminates UI stutter during tuner drag with derived plots rendering.
-- Noise floor estimation: reuse scratch buffer across frequency bins
-  (eliminates up to 2048 heap allocations per tile), replaced double
-  nth_element with adaptive nth_element + min_element.
-  Benchmark: 1.14x-1.73x faster depending on FFT size.
+Performance:
+- TunerTransform::work(): mutex narrowed to parameter snapshot only
+  (~1us); FIR computation (~50-200us) runs lock-free. Eliminates UI
+  stutter during tuner drag with derived plots.
+- Noise floor: scratch buffer reuse (eliminates up to 2048 heap allocs
+  per tile), adaptive nth_element + min_element. 1.14x-1.73x faster.
 
-Bug fixes (v0.5.2)
-------------------
-- Noise floor: percentile interpolation (nth_element range)
-- Ctrl+wheel zoom now anchors on mouse cursor X position instead of viewport center
-- View position (Pos X/Y) now correctly preserved when changing FFT size, zero-pad,
-  overlap, zoom level (from slider), and crop-to-tuner toggle.
-  Root cause: updateView(reCenter=true) was designed for Ctrl+wheel zoom anchoring
-  but was used in all parameter-change paths, clobbering the scroll position with
-  stale mouse-wheel anchor data before restoreViewPosition could fix it.
-  Fix: reCenter=true now only used for Ctrl+wheel zoom; all other paths use
-  save => updateView(false) => restore. Added zoomFromWheel flag to distinguish
-  wheel zoom from slider zoom in setFFTAndZoom.
-- Zoom Y no longer zooms toward bottom of spectrogram.
-  Root cause: pixel-to-FFT-bin conversion in saveViewPosition/restoreViewPosition
-  assumed 1 pixel = 1 bin, ignoring the Y zoom crop window (yTop + visibleBins).
-  Fix: added getZoomY()/getVisibleBinTop() to SpectrogramPlot; save/restore and
-  View Pos Y display now use correct mapping: bin = yTop + pixel * fft / (plotH * zoomY).
-  Also fixed jumpToFreq() for the same issue.
-- ThresholdPlot bin/hex/dec overlay now refreshes when Power Max/Min changes.
-  Root cause: getTunerTaps() uses powerMax for filter gain, so changing power
-  changes the amplitude reaching the threshold plot, but bitsCacheDirty was never set.
-  Fix: added invalidateBitsCache() to ThresholdPlot; called from setPowerMax/Min,
-  tuner position changes, and PlotView::repaint() (covers all parameter changes).
-- Tuner BW/centre changes now update derived plots (amplitude, frequency, threshold)
-  in real-time during drag, not only on mouse release.
-  Root cause: tunerFullUpdate() skipped all processing while isDragging().
-  Fix: tuner transform parameters (frequency, taps, bandwidth) are now updated
-  during drag; only updateHeight() is deferred to avoid the feedback loop.
+New files:
+- crashlog.h/cpp - crash & diagnostic logger (SEH/signals, stack
+  traces, OS/compiler/Qt info).
 
-Bug fixes (v0.5.1)
-------------------
-- Annotation list now cleared on new file load (stale annotations from previous file)
-- Tuner position bounds-checked on session load (prevents out-of-range bins)
-- Session load blocks signals during reset phase (no spurious state mismatches)
-- TracePlot min/max decimation fixes missing vertical segments at all zoom levels
-- Derived plots (amplitude/frequency/phase) now share correct stride with spectrogram
-- QPixmapCache cleared when stride changes (FFT size, zoom, zero-pad, overlap)
-- Zoom Y now works in crop-to-tuner mode
-- Grid opacity 0 now fully hides all cursor elements
-- Pre-existing warnings resolved (including %zu, memset on complex<float>,
-  unused variables) when built with -Wall -Wextra -Wpedantic
 
-Bug fixes (v0.5.0)
-------------------
-Division-by-zero, integer overflow, null pointer guards, uninitialized members,
-bounds checks, iterator fix, type mismatches, tuner constraints, cursor paint.
-Qt5/Qt6 deprecated QMouseEvent constructor fixed.
-.isession files now load correctly from command line.
-All source files ASCII-only (except SI micro sign).
+v0.5.2 (reassigned spectrogram & quality)
+------------------------------------------
+Features:
+- Reassigned spectrogram: 3 FFTs per column (h, t*h, h') with energy
+  redistribution to TF centroids (Auger & Flandrin 1995). Sharper
+  pure tones, better chirp concentration. Threshold 1-120 dB below peak.
+- Synchrosqueezed: 2 FFTs per column, frequency-only reassignment.
+  Preserves time grid (invertible). 33% cheaper than reassigned.
+- TracePlot min/max decimation: per-pixel-column min-to-max line.
+  Preserves OOK edges, FSK steps, fast transitions at all zoom levels.
+
+Bug fixes:
+- Noise floor: percentile interpolation (nth_element range).
+- Ctrl+wheel zoom anchors on cursor X (was viewport center).
+- View position preserved across FFT/zero-pad/overlap/zoom/crop changes.
+  Root cause: updateView(reCenter=true) clobbered scroll position with
+  stale wheel-anchor data. Fix: reCenter only for wheel zoom; other
+  paths use save => updateView(false) => restore.
+- Zoom Y no longer pulls toward bottom. Pixel-to-bin mapping now accounts
+  for crop window (yTop + visibleBins). Also fixes jumpToFreq().
+- ThresholdPlot bin/hex/dec overlay refreshes on Power Max/Min change
+  (powerMax affects filter gain; bitsCacheDirty was never set).
+- Tuner BW/centre changes update derived plots in real-time during
+  drag, not only on mouse release.
+
+New files:
+- reassigned.h/cpp - reassigned & synchrosqueezed TFR engine.
+
+
+v0.5.1 (advanced spectrogram & signal analysis)
+------------------------------------------------
+Features:
+- FFT overlap control (0%, 25%, 50%, 75%, 87.5%). 4x more columns at
+  75% overlap, 8x at 87.5%.
+- Window function selector (6): Hann, Hamming, Blackman-Harris (-92 dB
+  sidelobes), Kaiser (beta 0-30), Flat-top, Rectangular.
+- Extended zero-padding (1x to 64x).
+- Averaging modes (5): Off, Linear, Exponential (alpha decay), Max-hold,
+  Min-hold. Max/Min use O(n) monotonic deque.
+- Noise floor estimation & subtraction: subtract (median), subtract
+  (percentile), normalize. Per-frequency-bin.
+- Colormap selection (6): Default, Viridis, Inferno, Turbo, Magma,
+  Grayscale.
+- Cursor lock (prevent accidental dragging while scrolling).
+- Grid opacity controls all cursor elements; opacity 0 fully hides.
+- Zoom Y works in crop-to-tuner mode (up to 32x).
+- Scrollable controls dock, sized to fit at launch.
+- Window starts at 50% screen width, 80% height, centered.
+- WAV file support (RIFF/WAV, IQ 2-channel, PCM 8/16/24/32-bit and
+  IEEE float, SDR++ compatible).
+
+Bug fixes:
+- Annotation list cleared on new file load.
+- Tuner position bounds-checked on session load.
+- Session load blocks signals during reset phase.
+- Derived plots share correct stride with spectrogram.
+- QPixmapCache cleared on stride change (FFT size, zoom, zero-pad,
+  overlap).
+- Pre-existing warnings resolved (%zu, memset on complex<float>, unused
+  vars) under -Wall -Wextra -Wpedantic.
+
+UI:
+- TFR mode combo (Standard / Reassigned / Synchrosqueezed).
+- Reassign threshold spin (visible only for non-Standard modes).
+- Avg mode combo shows/hides relevant sub-controls (slider, alpha spin).
+- Kaiser beta spin visible only when Kaiser window selected.
+- Noise percentile spin visible only when percentile mode selected.
+- In-app note: derived plots independent from FFT settings.
+- All new settings persisted in QSettings and .isession.
+- TFR mode always starts at Standard (experimental, not persisted).
+
+New files:
+- windowfunctions.h/cpp - 6 window types, precomputed coefficients.
+- colormaps.h/cpp       - 6 colormap LUT generators (256-entry RGBA).
+- noisefloor.h/cpp      - per-bin noise floor estimation & subtract.
+- averaging.h/cpp       - 5 averaging modes, monotonic deque optimization.
+
+
+v0.5.0
+------
+Features:
+- ThresholdPlot: bin/hex/ascii overlay on threshold waveform, export
+  to clipboard.
+- Editable symbol rate (with SI suffix support), period, offset.
+- Auto detect symbol rate (ASK/OOK): Schmitt trigger + run-length.
+- Session save/load (.isession v0.5.0 JSON).
+- Drag & drop file loading.
+- Spectrogram Y zoom (frequency crop centered on tuner).
+- FFT zero-padding (extends FFT size beyond window size).
+- Crop to tuner (physical height change, drag offset locking).
+- Tuner panel: editable centre/bandwidth with SI, visibility toggle.
+- Export tuner-filtered with rational resampler (liquid-dsp msresamp_crcf).
+- Export spectrogram to PNG (current view with top+bottom time scales).
+- Cursor grid opacity slider.
+- Symbol count clamping to file bounds.
+- Cursor state preservation on disable/re-enable.
+- Auto-enable cursors on file load.
+- Tuner default center position.
+- View position (Pos X/Y editable, bookmarks with add/update/remove).
+- Bookmarks saved in .isession, loadable from .json.
+- SI unit display and input for Hz/Bd fields.
+- Bottom time scale (on screen and PNG export).
+- View position preserved across FFT/zoom/zero-pad changes.
+- Bit order toggle (LSB first).
+
+Bug fixes:
+- Division-by-zero, integer overflow, null pointer guards, uninitialized
+  members, bounds checks, iterator fix, type mismatches, tuner
+  constraints, cursor paint.
+- Qt5/Qt6 deprecated QMouseEvent constructor fixed.
+- .isession files load correctly from command line.
+- All source files ASCII-only (except SI micro sign).
+
+
+Performance (cumulative)
+------------------------
+- FFTW plan cache (FFTW_MEASURE + wisdom persistence + pre-warm at startup).
+- Deferred tuner/zoom updates, ThresholdPlot bit cache, debounced
+  QSettings writes.
+- Pre-allocated reusable buffers (FFT tile, sample, linear, liquid-dsp).
+- Adaptive tile size (~512KB/tile), 128MB caches, FNV-1a hash keys.
+- Precomputed constants, FFT normalization by windowSize, partial
+  read zero-fill.
+- Fast IEEE754 log2f/exp2f approximations (bit-trick, sub-pixel dB
+  accuracy).
+- Zero-copy FFT API, zero-alloc sample reads, std::fill zero-pad.
+- Cache-friendly loop order for colormap (4-7x faster) and averaging.
+- Cursor grid: viewport culling, sub-pixel dedup, batched solid lines.
+- Correct dB scale (true dBFS, roundtrip-correct dB/linear averaging).
+- TracePlot min/max decimation.
+- Monotonic deque for O(n) sliding window max/min hold.
+- Transpose-process-transpose for cache-friendly max/min hold on
+  column-major data.
+- Window functions computed once per config change (zero runtime cost).
+- Colormaps generated once (256-entry LUT, zero runtime cost).
+- Noise floor cached per tile, recomputed only on parameter change.
+- Three-level tile cache: fftCache -> enhancedCache -> pixmapCache.
+- TileCacheKey includes overlap index for correct cache isolation.
+- Reassigned: ~2.5x cost of standard STFT (3 FFTs); synchrosqueezed:
+  ~1.8x (2 FFTs).
+- Memory-mapped file I/O: 100GB+ files use ~500MB RAM.
+
+
+Display
+-------
+Dynamic slider labels, render time stats (min/avg/max), native platform
+style (windowsvista/Fusion), SI formatted values, controls rearranged
+by workflow.
+
 
 Build
 -----
-MinGW: static linking (libgcc, libstdc++, -mwindows), Qt/runtime DLL bundling.
-LIQUID before FFTW link order for static libs.
-Wisdom file next to exe (fallback to AppLocalDataLocation on read-only installs).
-Portable: builds on Windows (MinGW/MSVC), Linux, macOS.
-Zero warnings with -Wall -Wextra -Wpedantic on GCC/MinGW.
+- MinGW: static linking (libgcc, libstdc++, -mwindows), Qt/runtime
+  DLL bundling.
+- LIQUID before FFTW link order for static libs.
+- Wisdom file next to exe (fallback to AppLocalDataLocation on
+  read-only installs).
+- Portable: builds on Windows (MinGW/MSVC), Linux, macOS.
+- Zero warnings with -Wall -Wextra -Wpedantic on GCC/MinGW; /W4 on MSVC.

@@ -770,10 +770,11 @@ void PlotView::exportTunerFiltered()
         if (!samples)
             continue;
 
-        /* resample chunk */
+        /* resample chunk. liquid-dsp takes 'unsigned int' for length;
+         * 'length' is bounded by 'step' which fits in unsigned int. */
         unsigned int numWritten = 0;
         msresamp_crcf_execute(resampler,
-                              samples.get(), length,
+                              samples.get(), (unsigned int)length,
                               outBuf.data(), &numWritten);
 
         if (numWritten > 0) {
@@ -1668,8 +1669,8 @@ void PlotView::paintEvent(QPaintEvent *)
     {                                                                           \
         int y = -verticalScrollBar()->value();                                  \
         for (auto&& plot : plots) {                                             \
-            QRect rect = QRect(0, y, width(), plot->height());                  \
-            plot->paintFunc(painter, rect, viewRange);                          \
+            QRect plotRect = QRect(0, y, width(), plot->height());              \
+            plot->paintFunc(painter, plotRect, viewRange);                      \
             y += plot->height();                                                \
         }                                                                       \
     }
@@ -1909,7 +1910,8 @@ void PlotView::enableAnnotationCommentsTooltips(bool enabled)
 
 int PlotView::sampleToColumn(size_t sample)
 {
-    return sample / samplesPerColumn();
+    /* column count fits in int because Qt scrollbar values are int */
+    return (int)(sample / samplesPerColumn());
 }
 
 size_t PlotView::columnToSample(int col)

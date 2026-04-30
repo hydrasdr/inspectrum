@@ -71,10 +71,15 @@ void generateWindow(WindowType type, int size, float *dest, float beta)
 
 	case WindowType::Kaiser: {
 		double denom = bessel_i0(beta);
+		if (denom == 0.0) denom = 1.0; /* beta == 0 edge: I0(0)=1, but guard anyway */
 		double halfN = N * 0.5;
 		for (int i = 0; i < size; i++) {
 			double t = (i - halfN) / halfN;
-			double arg = beta * sqrt(1.0 - t * t);
+			/* clamp to >=0 to absorb rounding error at edges
+			 * (mathematically t in [-1,1], so 1-t*t >= 0) */
+			double radicand = 1.0 - t * t;
+			if (radicand < 0.0) radicand = 0.0;
+			double arg = beta * sqrt(radicand);
 			dest[i] = (float)(bessel_i0(arg) / denom);
 		}
 		break;

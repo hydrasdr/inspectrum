@@ -23,11 +23,13 @@
 #include <algorithm>
 #include <complex>
 #include <map>
-#include <math.h>
 #include <sstream>
 #include "fastmath.h"
 
-static const double Tau = M_PI * 2.0;
+/* Tau (2*pi) without depending on the non-standard M_PI macro,
+ * which requires _USE_MATH_DEFINES on MSVC and is a POSIX-only
+ * extension elsewhere. Defined to double precision. */
+static const double Tau = 6.283185307179586476925286766559;
 
 template <class T> const T& clamp (const T& value, const T& min, const T& max)
 {

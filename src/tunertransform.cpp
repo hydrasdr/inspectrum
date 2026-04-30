@@ -19,6 +19,7 @@
  */
 
 #include "tunertransform.h"
+#include <cmath>
 #include <liquid/liquid.h>
 #include "util.h"
 
@@ -41,7 +42,9 @@ void TunerTransform::rebuildFilter()
 {
     if (filter)
         firfilt_crcf_destroy(filter);
-    filter = firfilt_crcf_create(taps.data(), taps.size());
+    /* liquid-dsp takes 'unsigned int' for filter length; FIR taps
+     * count is well below UINT_MAX */
+    filter = firfilt_crcf_create(taps.data(), (unsigned int)taps.size());
     filterDirty = false;
 }
 
@@ -72,8 +75,11 @@ void TunerTransform::work(void *input, void *output, int count, size_t sampleid)
     if ((int)mixBuf.size() < count)
         mixBuf.resize(count);
 
-    /* mix down using pre-allocated NCO */
-    nco_crcf_set_phase(nco, fmodf(freq * sampleid, Tau));
+    /* mix down using pre-allocated NCO. Compute the modulo in double
+     * precision: freq * sampleid in float exhausts mantissa for files
+     * larger than ~16M samples, causing visible NCO phase drift. */
+    double phase = fmod((double)freq * (double)sampleid, Tau);
+    nco_crcf_set_phase(nco, (float)phase);
     nco_crcf_set_frequency(nco, freq);
     nco_crcf_mix_block_down(nco,
                             static_cast<std::complex<float>*>(input),
@@ -97,16 +103,16 @@ void TunerTransform::work(void *input, void *output, int count, size_t sampleid)
     }
 }
 
-void TunerTransform::setFrequency(float frequency)
+void TunerTransform::setFrequency(float newFreq)
 {
     QMutexLocker lock(&paramMutex);
-    this->frequency = frequency;
+    frequency = newFreq;
 }
 
-void TunerTransform::setTaps(std::vector<float> taps)
+void TunerTransform::setTaps(std::vector<float> newTaps)
 {
     QMutexLocker lock(&paramMutex);
-    this->taps = taps;
+    taps = std::move(newTaps);
     filterDirty = true;
 }
 
@@ -121,9 +127,9 @@ float TunerTransform::relativeBandwidth() {
     return bandwidth;
 }
 
-void TunerTransform::setRelativeBandwith(float bandwidth)
+void TunerTransform::setRelativeBandwith(float newBw)
 {
     QMutexLocker lock(&paramMutex);
-    this->bandwidth = bandwidth;
+    bandwidth = newBw;
 }
 
