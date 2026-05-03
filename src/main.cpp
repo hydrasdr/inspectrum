@@ -20,8 +20,12 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QLocale>
 #include <QProgressDialog>
 #include <QStyleFactory>
+
+#include <clocale>
+#include <locale>
 
 #include "crashlog.h"
 #include "fft.h"
@@ -30,6 +34,11 @@
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+
+    /* pin numeric I/O to '.' decimal separator on every locale layer */
+    QLocale::setDefault(QLocale::c());
+    std::setlocale(LC_NUMERIC, "C");
+    std::locale::global(std::locale::classic());
 
     CrashLog::init(APP_NAME, APP_VERSION);
     CrashLog::installCrashHandlers();

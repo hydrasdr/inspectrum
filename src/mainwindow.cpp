@@ -27,6 +27,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <locale>
 #include <sstream>
 
 #include "mainwindow.h"
@@ -139,6 +140,7 @@ void MainWindow::openFile(QString fileName)
         QString samplerate = match.captured(3);
 
         std::stringstream ss(samplerate.toUtf8().constData());
+        ss.imbue(std::locale::classic());
 
         // Needs to be a double as the number is in scientific format
         double rate;

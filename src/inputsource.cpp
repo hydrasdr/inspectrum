@@ -43,9 +43,8 @@
 
 class ComplexF32SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(std::complex<float>);
-    }
+    size_t sampleSize() override { return sizeof(std::complex<float>); }
+    size_t sampleAlign() override { return alignof(float); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const std::complex<float>*>(src);
@@ -55,9 +54,8 @@ public:
 
 class ComplexF64SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(std::complex<double>);
-    }
+    size_t sampleSize() override { return sizeof(std::complex<double>); }
+    size_t sampleAlign() override { return alignof(double); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const std::complex<double>*>(src);
@@ -71,9 +69,8 @@ public:
 
 class ComplexS32SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(std::complex<int32_t>);
-    }
+    size_t sampleSize() override { return sizeof(std::complex<int32_t>); }
+    size_t sampleAlign() override { return alignof(int32_t); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const std::complex<int32_t>*>(src);
@@ -88,9 +85,8 @@ public:
 
 class ComplexS16SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(std::complex<int16_t>);
-    }
+    size_t sampleSize() override { return sizeof(std::complex<int16_t>); }
+    size_t sampleAlign() override { return alignof(int16_t); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const std::complex<int16_t>*>(src);
@@ -105,9 +101,8 @@ public:
 
 class ComplexS8SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(std::complex<int8_t>);
-    }
+    size_t sampleSize() override { return sizeof(std::complex<int8_t>); }
+    size_t sampleAlign() override { return alignof(int8_t); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const std::complex<int8_t>*>(src);
@@ -122,9 +117,8 @@ public:
 
 class ComplexU8SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(std::complex<uint8_t>);
-    }
+    size_t sampleSize() override { return sizeof(std::complex<uint8_t>); }
+    size_t sampleAlign() override { return alignof(uint8_t); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const std::complex<uint8_t>*>(src);
@@ -139,9 +133,8 @@ public:
 
 class RealF32SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(float);
-    }
+    size_t sampleSize() override { return sizeof(float); }
+    size_t sampleAlign() override { return alignof(float); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const float*>(src);
@@ -155,9 +148,8 @@ public:
 
 class RealF64SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(double);
-    }
+    size_t sampleSize() override { return sizeof(double); }
+    size_t sampleAlign() override { return alignof(double); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const double*>(src);
@@ -171,9 +163,8 @@ public:
 
 class RealS16SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(int16_t);
-    }
+    size_t sampleSize() override { return sizeof(int16_t); }
+    size_t sampleAlign() override { return alignof(int16_t); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const int16_t*>(src);
@@ -188,9 +179,8 @@ public:
 
 class RealS8SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(int8_t);
-    }
+    size_t sampleSize() override { return sizeof(int8_t); }
+    size_t sampleAlign() override { return alignof(int8_t); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const int8_t*>(src);
@@ -205,9 +195,8 @@ public:
 
 class RealU8SampleAdapter : public SampleAdapter {
 public:
-    size_t sampleSize() override {
-        return sizeof(uint8_t);
-    }
+    size_t sampleSize() override { return sizeof(uint8_t); }
+    size_t sampleAlign() override { return alignof(uint8_t); }
 
     void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) override {
         auto s = reinterpret_cast<const uint8_t*>(src);
@@ -358,11 +347,9 @@ QJsonObject InputSource::readMetaData(const QString &filename)
 
 /*
  * Parse a RIFF/WAV header from memory-mapped data.
- * Supports IQ WAV files as produced by SDR++ and similar tools:
- *   - PCM  (codec 1): uint8, int16, int32  (2-channel IQ)
- *   - IEEE float (codec 3): float32         (2-channel IQ)
+ * Codecs: PCM (1, uint8/int16/int32), IEEE float (3, float32),
+ * EXTENSIBLE (0xFFFE, PCM/float wrapped with a SubFormat GUID).
  * Returns the byte offset where sample data begins.
- * Sets sampleAdapter and sampleRate from the header.
  */
 size_t InputSource::parseWavHeader(const uchar *data, size_t fileSize)
 {
@@ -406,6 +393,21 @@ size_t InputSource::parseWavHeader(const uchar *data, size_t fileSize)
             memcpy(&numChannels, data + pos + 10, 2);
             memcpy(&wavSampleRate, data + pos + 12, 4);
             memcpy(&bitsPerSample, data + pos + 22, 2);
+
+            /* WAVE_FORMAT_EXTENSIBLE: actual codec is the first 4
+             * bytes of the 16-byte SubFormat GUID at fmt+24 */
+            if (audioFormat == 0xFFFE) {
+                if (chunkSize < 40)
+                    throw std::runtime_error("WAV EXTENSIBLE fmt chunk too small");
+                uint32_t subFormat;
+                memcpy(&subFormat, data + pos + 8 + 24, 4);
+                if (subFormat == 1 || subFormat == 3)
+                    audioFormat = (uint16_t)subFormat;
+                else
+                    throw std::runtime_error("WAV: unsupported EXTENSIBLE SubFormat "
+                                             + std::to_string(subFormat));
+            }
+
             foundFmt = true;
         }
         else if (memcmp(data + pos, "data", 4) == 0) {
@@ -576,22 +578,17 @@ void InputSource::openFile(const char *filename)
         throw;
     }
 
-    /*
-     * Verify (data + dataOffset) alignment matches the adapter's
-     * sample type. mmap'd files are page-aligned, but with a non-zero
-     * dataOffset (e.g., WAV header) the resulting pointer can be
-     * misaligned for complex<float> / int32_t reads. Misaligned typed
-     * access is UB on strict-alignment archs (ARM/SPARC) and a
-     * strict-aliasing violation everywhere. Refuse the file in that
-     * case rather than crash silently downstream.
-     */
+    /* Refuse files where dataOffset breaks scalar alignment for
+     * typed reads. Shifting by whole samples can't fix it
+     * (sampleSize is always a multiple of sampleAlign), and
+     * shifting by less swaps I<->Q. */
     if (sampleAdapter) {
-        const size_t sampleAlign = sampleAdapter->sampleSize();
+        const size_t sampleAlign = sampleAdapter->sampleAlign();
         if (sampleAlign > 1 &&
             (reinterpret_cast<uintptr_t>(data + dataOffset) % sampleAlign) != 0) {
             file->unmap(data);
             throw std::runtime_error(
-                "File data offset is not aligned to sample size; "
+                "File data offset is not aligned to scalar size; "
                 "cannot mmap-access. Convert the file or remove the header.");
         }
     }

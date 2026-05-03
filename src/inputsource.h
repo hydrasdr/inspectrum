@@ -28,6 +28,8 @@
 class SampleAdapter {
 public:
     virtual size_t sampleSize() = 0;
+    /* alignof(scalar), not sizeof(sample): complex<T> only needs alignof(T) */
+    virtual size_t sampleAlign() = 0;
     virtual void copyRange(const void* const src, size_t start, size_t length, std::complex<float>* const dest) = 0;
     virtual ~SampleAdapter() { };
 };

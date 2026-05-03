@@ -20,8 +20,12 @@
 
 #include "util.h"
 #include <cstdlib>
+#include <iomanip>
 #include <locale>
 #include <sstream>
+
+/* All number<->text conversions pin to classic locale so '.' is the
+ * decimal separator regardless of system locale. */
 
 std::string formatSIValue(float value)
 {
@@ -44,17 +48,15 @@ std::string formatSIValue(float value)
         value *= 1e-3f;
         power += 3;
     }
-    std::stringstream ss;
+    std::ostringstream ss;
+    ss.imbue(std::locale::classic());
     ss << value << prefixes[power];
     return ss.str();
 }
 
 std::string formatSIValueSigned(double value, const char *unit)
 {
-    /* Sorted descending: first row whose threshold <= |value| wins.
-     * Sub-1 prefixes (m/u/n) are required for time displays in the
-     * us..ms range; without them values < 1e-3 collapse to "0.000"
-     * via the %.3f branch below. */
+    /* sub-1 prefixes (m/u/n) needed so us..ms times don't collapse to "0.000" */
     static const struct { double threshold; double divisor; const char *suffix; } table[] = {
         { 1e9,   1e9,   "G" },
         { 1e6,   1e6,   "M" },
@@ -66,10 +68,13 @@ std::string formatSIValueSigned(double value, const char *unit)
         { 0,     1e-12, "p" },
     };
 
+    std::ostringstream ss;
+    ss.imbue(std::locale::classic());
+    ss << std::fixed;
+
     if (value == 0.0) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "0%s", unit);
-        return buf;
+        ss << '0' << unit;
+        return ss.str();
     }
 
     double av = (value < 0) ? -value : value;
@@ -85,18 +90,17 @@ std::string formatSIValueSigned(double value, const char *unit)
     }
 
     double scaled = value / divisor;
-    char buf[64];
 
-    /* pick precision: show up to 4 significant digits */
     double as = (scaled < 0) ? -scaled : scaled;
     if (as >= 100.0)
-        snprintf(buf, sizeof(buf), "%.1f%s%s", scaled, suffix, unit);
+        ss << std::setprecision(1);
     else if (as >= 10.0)
-        snprintf(buf, sizeof(buf), "%.2f%s%s", scaled, suffix, unit);
+        ss << std::setprecision(2);
     else
-        snprintf(buf, sizeof(buf), "%.3f%s%s", scaled, suffix, unit);
+        ss << std::setprecision(3);
 
-    return buf;
+    ss << scaled << suffix << unit;
+    return ss.str();
 }
 
 bool parseSIValue(const std::string &str, double &result)

@@ -25,8 +25,11 @@
 #include "frequencydemod.h"
 #include "phasedemod.h"
 #include <liquid/liquid.h>
+#include <iomanip>
 #include <iostream>
 #include <fstream>
+#include <locale>
+#include <sstream>
 #include <QtGlobal>
 #include <QApplication>
 #include <QClipboard>
@@ -47,6 +50,17 @@
 #include <QToolTip>
 #include <QVBoxLayout>
 #include "plots.h"
+
+namespace {
+/* locale-independent: snprintf("%f") follows LC_NUMERIC */
+static QString formatTimeTick(double tick)
+{
+    std::ostringstream ss;
+    ss.imbue(std::locale::classic());
+    ss << std::fixed << std::setprecision(6) << tick;
+    return QString::fromStdString(ss.str());
+}
+}
 
 PlotView::PlotView(InputSource *input) : cursors(this), viewRange({0, 0})
 {
@@ -915,14 +929,13 @@ void PlotView::exportSpectrogramPng()
                     int x = (int)((tickSample - viewRange.minimum) / spc);
                     if (x < 0 || x >= imgWidth) continue;
 
-                    char buf[128];
-                    snprintf(buf, sizeof(buf), "%.06f", tick);
+                    QString label = formatTimeTick(tick);
 
                     painter.drawLine(x, topY, x, topY + scaleHeight);
-                    painter.drawText(x + 2, topY + scaleHeight - 5, buf);
+                    painter.drawText(x + 2, topY + scaleHeight - 5, label);
 
                     painter.drawLine(x, botY, x, botY + scaleHeight);
-                    painter.drawText(x + 2, botY + scaleHeight - 5, buf);
+                    painter.drawText(x + 2, botY + scaleHeight - 5, label);
                 }
 
                 /* minor ticks */
@@ -1730,16 +1743,15 @@ void PlotView::paintTimeScale(QPainter &painter, QRect &rect, range_t<size_t> sa
         if (tickSample < sampleRange.minimum) { tick += durationPerTick; continue; }
         int tickLine = sampleToColumn(tickSample - sampleRange.minimum);
 
-        char buf[128];
-        snprintf(buf, sizeof(buf), "%.06f", tick);
+        QString label = formatTimeTick(tick);
 
         /* top */
         painter.drawLine(tickLine, 0, tickLine, 30);
-        painter.drawText(tickLine + 2, 25, buf);
+        painter.drawText(tickLine + 2, 25, label);
 
         /* bottom */
         painter.drawLine(tickLine, botY, tickLine, botY + 30);
-        painter.drawText(tickLine + 2, botY + 25, buf);
+        painter.drawText(tickLine + 2, botY + 25, label);
 
         tick += durationPerTick;
     }
